@@ -1,0 +1,63 @@
+{"case":"s1","call":"original","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s1","call":"original","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s1","call":"original","t":0.1,"otlp":["codex.api_request","codex.conversation_starts","codex.startup_phase","codex.user_prompt"]}
+{"case":"s1","call":"original","t":0.3,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s1","call":"original","t":0.5,"otlp":["codex.sse_event","event.kind=response.output_item.added"]}
+{"case":"s1","call":"original","t":2.6,"stdout":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ANSWER: S1-ORIGINAL"}}}
+{"case":"s1","call":"original","t":2.6,"stdout":{"type":"turn.completed","usage":{"input_tokens":23026,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":11999,"reasoning_output_tokens":11988}}}
+{"case":"s1","call":"original","t":2.65,"exit":0}
+{"case":"s1","call":"hedge","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s1","call":"hedge","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s1","call":"hedge","t":0.2,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s1","call":"hedge","t":2.0,"stdout":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ANSWER: S1-HEDGE"}}}
+{"case":"s1","call":"hedge","t":2.0,"stdout":{"type":"turn.completed","usage":{"input_tokens":23026,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":11999,"reasoning_output_tokens":11988}}}
+{"case":"s1","call":"hedge","t":2.05,"exit":0}
+{"case":"s2","call":"original","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s2","call":"original","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s2","call":"original","t":0.1,"otlp":["codex.api_request","codex.conversation_starts","codex.startup_phase","codex.user_prompt"]}
+{"case":"s2","call":"original","t":0.4,"otlp":["codex.sse_event","event.kind=keepalive"],"every":0.25}
+{"case":"s2","call":"hedge","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s2","call":"hedge","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s2","call":"hedge","t":0.1,"otlp":["codex.api_request","codex.conversation_starts","codex.startup_phase","codex.user_prompt"]}
+{"case":"s2","call":"hedge","t":0.4,"otlp":["codex.sse_event","event.kind=keepalive"],"every":0.25}
+{"case":"s3x","call":"original","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s3x","call":"original","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s3x","call":"original","t":0.3,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s3x","call":"original","t":0.6,"stdout":{"type":"error","message":"stream disconnected before completion: idle timeout waiting for SSE"}}
+{"case":"s3x","call":"original","t":0.6,"stdout":{"type":"turn.failed","error":{"message":"stream disconnected before completion: idle timeout waiting for SSE"}}}
+{"case":"s3x","call":"hedge","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s3x","call":"hedge","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s3x","call":"hedge","t":0.3,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s3x","call":"hedge","t":0.4,"stderr":"INFO codex_otel.log_only: event.name=\"codex.sse_event\" event.kind=response.completed error.message=stream disconnected before completion: idle timeout waiting for SSE"}
+{"case":"s3x","call":"fallback","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s3x","call":"fallback","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s3x","call":"fallback","t":0.3,"stdout":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ANSWER: S3-FALLBACK"}}}
+{"case":"s3x","call":"fallback","t":0.3,"stdout":{"type":"turn.completed","usage":{"input_tokens":23026,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":11999,"reasoning_output_tokens":11988}}}
+{"case":"s3x","call":"fallback","t":0.35,"exit":0}
+{"case":"s3y","call":"original","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s3y","call":"original","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s3y","call":"original","t":0.3,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s3y","call":"original","t":0.5,"stdout":{"type":"error","message":"stream disconnected before completion: idle timeout sending websocket request"}}
+{"case":"s3y","call":"original","t":4.0,"stdout":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ANSWER: S3-Y-ORIGINAL"}}}
+{"case":"s3y","call":"original","t":4.0,"stdout":{"type":"turn.completed","usage":{"input_tokens":23026,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":11999,"reasoning_output_tokens":11988}}}
+{"case":"s3y","call":"original","t":4.05,"exit":0}
+{"case":"s3y","call":"hedge","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s3y","call":"hedge","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s3y","call":"hedge","t":0.2,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s3y","call":"hedge","t":1.0,"stdout":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ANSWER: S3-Y-HEDGE"}}}
+{"case":"s3y","call":"hedge","t":1.0,"stdout":{"type":"turn.completed","usage":{"input_tokens":23026,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":11999,"reasoning_output_tokens":11988}}}
+{"case":"s3y","call":"hedge","t":1.05,"exit":0}
+{"case":"s4","call":"original","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s4","call":"original","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s4","call":"original","t":0.3,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s4","call":"original","t":0.5,"otlp":["codex.sse_event","event.kind=response.output_item.added"]}
+{"case":"s4","call":"original","t":3.2,"stdout":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ANSWER: S4-ORIGINAL"}}}
+{"case":"s4","call":"original","t":3.2,"stdout":{"type":"turn.completed","usage":{"input_tokens":23026,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":11999,"reasoning_output_tokens":11988}}}
+{"case":"s4","call":"original","t":3.25,"exit":0}
+{"case":"s4","call":"hedge","t":0.0,"stdout":{"type":"thread.started","thread_id":"THREAD_ID"}}
+{"case":"s4","call":"hedge","t":0.0,"stdout":{"type":"turn.started"}}
+{"case":"s4","call":"hedge","t":0.2,"stdout":{"type":"item.started","item":{"id":"item_0","type":"reasoning"}}}
+{"case":"s4","call":"hedge","t":0.2,"otlp":["codex.api_request","codex.sse_event","event.kind=response.created","event.kind=response.in_progress"]}
+{"case":"s4","call":"hedge","t":2.5,"stdout":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ANSWER: S4-HEDGE"}}}
+{"case":"s4","call":"hedge","t":2.5,"stdout":{"type":"turn.completed","usage":{"input_tokens":23026,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":11999,"reasoning_output_tokens":11988}}}
+{"case":"s4","call":"hedge","t":2.55,"exit":0}

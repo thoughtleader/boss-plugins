@@ -1,0 +1,71 @@
+{
+  "schema": "boss.progress/1",
+  "tool": "orchestrator",
+  "run_id": "2026-10-31-example-run",
+  "title": "Shared live progress: council + orchestrator + Boss extension",
+  "cwd": "/home/example/project",
+  "source_dir": "/home/example/.claude/orchestrator/runs/2026-10-31-example-run",
+  "events_path": "/home/example/.claude/orchestrator/runs/2026-10-31-example-run/manifest.jsonl",
+  "state": "running",
+  "phase": "wave 2",
+  "summary": "3/9 rows done · 1 running · gate row 5 passed",
+  "created_at": "2026-10-31T07:00:07.509Z",
+  "started_at": "2026-10-31T07:00:07.511Z",
+  "updated_at": "2026-10-31T07:54:20.272Z",
+  "ended_at": null,
+  "heartbeat_at": null,
+  "heartbeat_interval_s": null,
+  "last_progress_at": "2026-10-31T07:54:20.272Z",
+  "seq": 19,
+  "writer": {"pid": 2131377, "start_ticks": null, "boot_id": "00000000-0000-4000-8000-0000000000b0", "kind": "oneshot"},
+  "owner": {"session_id": "00000000-0000-4000-8000-000000000001", "pid": null, "start_ticks": null,
+            "inbox": null},
+  "counts": [
+    {"unit": "rows", "label": "rows", "done": 3, "total": 9, "running": 1, "failed": 0},
+    {"unit": "wave", "label": "wave 2", "done": 0, "total": 3, "running": 1, "failed": 0}
+  ],
+  "items": [
+    {"id": "wave:1", "parent": null, "kind": "wave", "label": "wave 1", "state": "done"},
+    {"id": "row:5", "parent": "wave:1", "kind": "gate", "label": "Messaging try-it (Channels / pull MCP / Stop hook)", "state": "done",
+     "meta": {"gate": true, "plan_status": "done (5-messaging-try.md)"}},
+    {"id": "row:5/a1", "parent": "row:5", "kind": "attempt", "label": "2026-10-31-example-run#5.1", "state": "done", "attempt": 1,
+     "model": "sonnet", "effort": "high", "started_at": "2026-10-31T07:15:14.399Z", "ended_at": "2026-10-31T07:25:36.937Z",
+     "artifacts": [{"label": "result", "path": "/home/example/.claude/orchestrator/runs/2026-10-31-example-run/5-messaging-try.md", "sha": null}],
+     "meta": {"agent": "orch-builder", "first_pass": true}},
+    {"id": "row:1", "parent": "wave:1", "kind": "row", "label": "Live status.json + council.py status [--watch]", "state": "done"},
+    {"id": "row:1/a1", "parent": "row:1", "kind": "attempt", "label": "2026-10-31-example-run#1.1", "state": "done", "attempt": 1,
+     "model": "sonnet", "effort": "high", "started_at": "2026-10-31T07:00:22.255Z", "ended_at": "2026-10-31T07:15:43.439Z",
+     "artifacts": [{"label": "commit", "path": null, "sha": "ab1136a"},
+                   {"label": "result", "path": "/home/example/.claude/orchestrator/runs/2026-10-31-example-run/1-status-json.md", "sha": null}],
+     "meta": {"agent": "orch-builder", "first_pass": true}},
+    {"id": "row:3", "parent": "wave:1", "kind": "row", "label": "Claude status line segment + side panel mod", "state": "done"},
+    {"id": "row:3/a1", "parent": "row:3", "kind": "attempt", "label": "2026-10-31-example-run#3.1", "state": "done", "attempt": 1,
+     "model": "sonnet", "effort": "high", "started_at": "2026-10-31T07:16:20.003Z", "ended_at": "2026-10-31T07:26:54.562Z",
+     "artifacts": [{"label": "result", "path": "/home/example/.claude/orchestrator/runs/2026-10-31-example-run/3-boss-mod.md", "sha": null}],
+     "meta": {"agent": "orch-builder", "first_pass": true, "sha_reason": "mod folder is not a git repo"}},
+
+    {"id": "wave:2", "parent": null, "kind": "wave", "label": "wave 2", "state": "running"},
+    {"id": "row:0", "parent": "wave:2", "kind": "row", "label": "Spec ~/.claude/boss/PROGRESS.md (boss.progress/1)", "state": "running"},
+    {"id": "row:0/a1", "parent": "row:0", "kind": "attempt", "label": "2026-10-31-example-run#0.1", "state": "running", "attempt": 1,
+     "model": "opus", "effort": "medium", "started_at": "2026-10-31T07:54:20.272Z",
+     "meta": {"agent": "orch-builder", "why": "holdout", "launch_model": "sonnet/high"}},
+    {"id": "row:1b", "parent": "wave:2", "kind": "row", "label": "Council writer conforms to boss.progress/1", "state": "queued", "model": "sonnet", "effort": "high"},
+    {"id": "row:2", "parent": "wave:2", "kind": "row", "label": "Orchestrator writes progress from manifest events", "state": "queued", "model": "sonnet", "effort": "high"},
+
+    {"id": "wave:3", "parent": null, "kind": "wave", "label": "wave 3", "state": "queued"},
+    {"id": "row:4", "parent": "wave:3", "kind": "row", "label": "Boss VS Code extension MVP", "state": "queued", "model": "sonnet", "effort": "high"},
+    {"id": "row:4b", "parent": "wave:3", "kind": "row", "label": "Messaging: one MCP server per Claude process", "state": "queued", "model": "sonnet", "effort": "high"},
+    {"id": "row:6", "parent": "wave:3", "kind": "gate", "label": "Review + full suites", "state": "queued", "model": "sonnet", "effort": "high",
+     "meta": {"gate": true, "role": "review"}}
+  ],
+  "attention": [
+    {"id": "mods-on", "kind": "approval", "item": "row:3",
+     "text": "Turn on mods once so the boss-progress mod loads (status line + Boss pane).",
+     "since": "2026-10-31T07:27:05.758Z", "options": ["Turn on", "Later"],
+     "answered_by": {"via": "session", "message_kind": "answer", "gate_hash": null, "command": null, "path": null}}
+  ],
+  "ext": {
+    "orchestrator": {"tier": "small", "plan_mode": "B", "launch_cap": 15, "launches": 5,
+                     "lease": {"holder": "00000000-0000-4000-8000-000000000001", "expires": "2026-10-31T09:00:07.508Z"}}
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "boss-meter-build",
+  "private": true,
+  "description": "Build tooling for the Boss meter mod (hooks/meter-register.js). Not published.",
+  "type": "module",
+  "scripts": {
+    "build": "node mod/build.mjs",
+    "test": "node --test test/*.test.mjs mod/tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

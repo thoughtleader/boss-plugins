@@ -1,0 +1,61 @@
+{
+  "schema": "boss.progress/1",
+  "tool": "council",
+  "run_id": "20261021T000000Z-test",
+  "title": "Proof run: is status.json live?",
+  "cwd": "/home/example/.claude/council",
+  "source_dir": "/home/example/.claude-council/runs/20261021T000000Z-test",
+  "events_path": "/home/example/.claude-council/runs/20261021T000000Z-test/events.jsonl",
+  "state": "running",
+  "phase": "seats",
+  "summary": "2/3 seats ok · quorum 2/3 · chair pending",
+  "created_at": "2026-10-31T07:08:10.478Z",
+  "started_at": "2026-10-31T07:08:10.478Z",
+  "updated_at": "2026-10-31T07:08:15.800Z",
+  "ended_at": null,
+  "heartbeat_at": "2026-10-31T07:08:15.800Z",
+  "heartbeat_interval_s": 1.0,
+  "last_progress_at": "2026-10-31T07:08:15.600Z",
+  "seq": 6,
+  "writer": {"pid": 1855755, "start_ticks": 103948211, "boot_id": "00000000-0000-4000-8000-0000000000b0", "kind": "process"},
+  "owner": {"session_id": "00000000-0000-4000-8000-000000000001", "pid": null, "start_ticks": null, "inbox": null},
+  "counts": [
+    {"unit": "seats", "label": "seats ok", "done": 2, "total": 3, "running": 1, "failed": 0},
+    {"unit": "quorum", "label": "quorum", "done": 2, "total": 3}
+  ],
+  "items": [
+    {"id": "seat:claude", "parent": null, "kind": "seat", "label": "claude", "state": "done", "model": "stub-model",
+     "started_at": "2026-10-31T07:08:10.500Z", "ended_at": "2026-10-31T07:08:14.900Z", "error": null, "detail": null,
+     "meta": {"provider": "stub", "elapsed_s": 4.4, "first_byte_s": 0.09, "out_bytes": 61, "status": "ok"}},
+    {"id": "seat:claude/original", "parent": "seat:claude", "kind": "call", "label": "original", "state": "done", "attempt": 1,
+     "model": "stub-model", "meta": {"elapsed_s": 4.4, "out_bytes": 61, "status": "ok"}},
+
+    {"id": "seat:codex", "parent": null, "kind": "seat", "label": "codex", "state": "running", "model": "stub-model",
+     "started_at": "2026-10-31T07:08:10.500Z",
+     "meta": {"provider": "stub", "elapsed_s": 5.3, "first_byte_s": 0.1, "out_bytes": 78, "last_byte_age_s": 0.2, "phase": "streaming"}},
+    {"id": "seat:codex/original", "parent": "seat:codex", "kind": "call", "label": "original", "state": "running", "attempt": 1,
+     "model": "stub-model", "meta": {"elapsed_s": 5.3, "out_bytes": 78, "phase": "streaming"}},
+
+    {"id": "seat:glm", "parent": null, "kind": "seat", "label": "glm", "state": "done", "model": "stand/in-model",
+     "started_at": "2026-10-31T07:08:10.800Z", "ended_at": "2026-10-31T07:08:15.800Z",
+     "detail": "original exit_1; fallback-reroute exit_1",
+     "meta": {"provider": "fstub", "elapsed_s": 5.0, "first_byte_s": 1.57, "out_bytes": 147, "status": "ok",
+              "substituted": {"model": "stand/in-model", "reason": "exit_1: openrouter http 503 (after 2 retries)"}}},
+    {"id": "seat:glm/original", "parent": "seat:glm", "kind": "call", "label": "original", "state": "failed", "attempt": 1,
+     "model": null, "error": "exit_1", "meta": {"elapsed_s": 1.7, "out_bytes": 0, "status": "exit_1"}},
+    {"id": "seat:glm/fallback-reroute", "parent": "seat:glm", "kind": "call", "label": "fallback-reroute", "state": "failed", "attempt": 2,
+     "replaces": "seat:glm/original", "model": null, "error": "exit_1", "meta": {"elapsed_s": 1.6, "out_bytes": 0, "status": "exit_1"}},
+    {"id": "seat:glm/stand-in", "parent": "seat:glm", "kind": "stand-in", "label": "stand-in stand/in-model", "state": "done", "attempt": 3,
+     "replaces": "seat:glm/fallback-reroute", "model": "stand/in-model",
+     "detail": "stand-in for glm: exit_1: openrouter http 503 (after 2 retries)",
+     "meta": {"elapsed_s": 1.7, "out_bytes": 147, "status": "ok", "call": "stand-in"}},
+
+    {"id": "chair", "parent": null, "kind": "chair", "label": "chair", "state": "queued", "model": null}
+  ],
+  "attention": [],
+  "ext": {
+    "council": {"schema_version": 1, "interval_s": 1.0, "elapsed_s": 5.3, "supervising": false, "exit_code": null,
+                "quorum": {"ok": 2, "min_ok": 3, "need": 3, "reached_at_s": null}, "late_pending": [],
+                "status_json": "/home/example/.claude-council/runs/20261021T000000Z-test/status.json"}
+  }
+}

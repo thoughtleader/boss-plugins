@@ -1,0 +1,275 @@
+# Council default config. Shipped with the plugin; used only when you have no config of your own.
+#
+# Which config council reads (first match wins):
+#   1. $COUNCIL_CONFIG                                  an explicit path (a missing file is an error)
+#   2. <Claude config dir>/council/config.toml          CLAUDE_CONFIG_DIR, else ~/.claude
+#   3. this file
+# To make your own: copy this file to <Claude config dir>/council/config.toml and edit it. A user config REPLACES this
+# file (it is the base, not an overlay), so keep every table you still want. Overlays (--config P, repeatable) deep-merge
+# over whichever base was picked; a [[seat]] list in an overlay replaces the whole roster.
+#
+# This default runs with the claude CLI alone: one seat, and the chair on the same model. A council is worth more with
+# several models: add [[seat]] blocks (examples below), set [quorum] min_ok = "n-1", and keep the matching
+# [providers.<name>] block. Seats are never run for real by `council.py preflight --free-only`.
+
+state_dir = "~/.claude-council"          # run dirs, drift baseline, latency history, current.json
+# prompts_dir = "/path/to/prompts"       # unset: the prompts shipped next to council.py
+
+# Money spent with no usable answer is a bug, so no seat gets a small token cap, a fixed kill or invisible thinking.
+# answer_reserve_tokens: tokens that must stay free for the ANSWER. Preflight FAILS any seat where
+#   max_output_tokens - (reasoning cap or 0) < answer_reserve_tokens. Override per provider or per seat.
+# reasoning_form (per provider or seat): "effort" sends a reasoning effort level and no reasoning cap;
+#   "tokens" caps reasoning at max_output_tokens - answer_reserve_tokens. Use "effort" for any model that ignores
+#   reasoning caps (ignores_reasoning_cap = true): preflight FAILS that provider if it is set to "tokens".
+answer_reserve_tokens = 16000
+
+# Chair: runs the synthesis. Not counted against max_anthropic_advisors. Never substituted.
+# `model` must be a full model id your claude CLI reports (a prefix of it is enough): an alias such as "sonnet" does not
+# match what the CLI reports and ends the call as model_mismatch.
+[chair]
+provider = "claude"
+model    = "claude-sonnet-5-5"
+
+# Roster. At most `max_anthropic_advisors` Anthropic seats (see [policy]).
+# A seat that fails keeps its own status, except an OpenRouter seat with a `fallback_model`: its stand-in answers in its
+# place (marked `substituted`).
+[[seat]]
+id       = "claude"
+provider = "claude"
+model    = "claude-sonnet-5-5"
+
+# More seats: uncomment, name real models, and keep the provider's [providers.<name>] block below.
+#
+# [[seat]]                                  # codex CLI (buffered: it prints only when finished)
+# id       = "codex"
+# provider = "codex"
+# model    = "<model id your codex CLI accepts>"
+#
+# [[seat]]                                  # agy CLI: the label's tier (Low / Medium / High) is its reasoning lever
+# id       = "agy"
+# provider = "agy"
+# model    = "<model label from `agy models`>"
+#
+# [[seat]]                                  # any OpenRouter model; needs the key in $OPENROUTER_API_KEY
+# id       = "openrouter"
+# provider = "openrouter"
+# model    = "<vendor/model-slug>"
+# max_output_tokens = 131072                # the model's real maximum (see its OpenRouter page)
+# reasoning_effort  = "high"
+# fallback_model    = "<vendor/model-slug>" # answers in its place when the seat's own model gives nothing
+
+# Seat lenses: one short line per seat is injected into that seat's advisor prompt ("Your lens: ... still give your
+# complete, own answer"), a wider spread of angles on top of model diversity. Off with `--lenses off`. Precedence:
+# `--lens SEAT=TEXT`, then a `lens = "..."` key on the [[seat]], then [lenses.seat] here.
+[lenses]
+enabled = true
+[lenses.seat]
+claude = "architecture: structure, interfaces, long-term maintainability and what is hard to change later"
+
+# Grounded mode: OFF unless a run says `--grounded [PATH]` (these keys only set how it behaves). The seats whose CLI can
+# use tools (claude: Read, Grep, Glob only; codex: `-s read-only`) get read-only access to PATH (default: the git root of
+# the cwd) and any `--attach IMAGE`; they cite `path:line` with a quoted snippet, and every citation is checked against
+# the files (a fabricated quote flags the seat, never fails or kills it). API-only seats stay text only.
+[grounded]
+enabled         = true      # false: `--grounded` is refused
+default_root    = "repo"    # PATH omitted: "repo" = git toplevel of the cwd, "cwd" = the cwd itself
+restricted      = true      # claude: file tools confined to the root and the image copies
+codex           = true      # codex seats are grounded in --grounded runs (its sandbox does NOT confine reads to the root)
+probes          = ["codex"] # providers whose grounded seats may run READ-ONLY commands to confirm a claim ([] = off)
+line_window     = 6         # a quote within +-N lines of the cited line is exact; elsewhere in the file it is "line off"
+max_file_bytes  = 2000000   # larger / binary files are "unchecked", never bad
+max_images      = 8
+max_image_bytes = 15000000
+max_bad_listed  = 8         # bad citations listed per seat in the summary
+
+# Answer salvage: a seat that ends with reasoning or partial output but NO usable answer gets ONE follow-up call to the
+# same provider (reasoning off or lowest, a short output cap, the original prompt + its own partial + "give your final
+# answer now"). It runs in parallel with the other seats, counts toward quorum, and is marked `salvaged`. The chair is
+# salvaged by the same rule (chair_* keys); if that fails too the run exits 4.
+[salvage]
+enabled           = true
+max_output_tokens = 8000
+timeout           = 600
+max_partial_chars = 120000
+chair_max_output_tokens = 16000
+chair_timeout           = 1200
+
+# Answer check: every call's final text is checked; tool-call markup with too little prose, or a near-empty answer, is
+# status `invalid_answer` (salvaged like empty_output). Absent table = off.
+[answer_check]
+enabled         = true
+min_chars       = 16
+min_prose_chars = 200
+
+# Hedge: a SOFT deadline. At hedge_at a second full-effort call starts IN PARALLEL; the original is never killed.
+# hedge_at = clamp(p95 x size_factor x factor, floor_s, cap_s); cold (too few samples) = cold_s. Only for providers whose
+# liveness signal is trustworthy (here: codex). With enabled = false the pre-hedge path applies (deadline = ceiling).
+[hedge]
+enabled   = true
+providers = ["codex"]
+factor    = 2.5
+floor_s   = 900
+cap_s     = 1800
+cold_s    = 1200
+quiet_s   = 120
+recheck_s = 30
+max_defer = 2.0
+
+# Fast-fail chain (OpenRouter seats only): a seat that ends failed with NO partial and no salvage gets, in order, a
+# rerouted retry (same model, original prompt, provider pin dropped) and then ONE call to its `fallback_model` (marked
+# `substituted`, and the chair is told which model really answered). Each step counts toward quorum like a seat answer.
+[fallback]
+enabled = true
+
+# Liveness evidence: the probe-signal flags reach a live launch (codex OTel exporter, agy log) only while `signals` is
+# true. sample_s: sampling period; grace_s: no verdict before this; no_conn_samples: consecutive no-connection samples
+# before `no_connection`.
+[liveness]
+signals         = true
+sample_s        = 10
+grace_s         = 120
+no_conn_samples = 18
+
+# Live status: while a council runs, the runner rewrites <run dir>/status.json on every state change and at least every
+# interval_s, and keeps <state_dir>/current.json pointing at the live run. `council.py status [--watch] [--json]` reads
+# them. A write failure never slows or stops a run. `progress` also publishes a boss.progress/1 snapshot for the meter.
+[status]
+enabled    = true
+interval_s = 3
+progress   = true
+
+[policy]
+# Claude is the chair plus at most ONE advisor seat. Only 0 or 1 is accepted.
+max_anthropic_advisors = 1
+
+[quorum]
+# min_ok: "n-1", "n", "all" or an integer. n = seats actually launched. One seat needs "n"; with three or more seats
+# "n-1" lets one seat fail.
+min_ok            = "n"
+straggler_grace_s = 90     # used only when cut_stream_stragglers = true; buffered seats are never cut after quorum
+# false: a stream seat still producing output is never cut after quorum; it ends by its idle timeout or ceiling.
+cut_stream_stragglers = false
+
+[timeouts.default]
+idle_s           = 240     # stream seats: kill after this long with no output byte
+ceiling_s        = 7200    # backstop only, never extended
+grace_s          = 5       # SIGTERM -> SIGKILL grace
+max_extensions   = 1       # check-in extensions when the seat group shows CPU/IO
+extension_factor = 1.5
+base_timeout_s   = 600     # buffered seats with too little latency history
+min_timeout_s    = 600     # floor for the adaptive buffered deadline
+
+[timeouts.adaptive]
+window_n      = 50         # latest ok seat lines considered
+min_samples   = 5          # fewer than this -> base_timeout_s
+size_exponent = 0.5        # prompt-size factor = max(1, bytes/median_bytes) ** this
+safety        = 1.5        # multiplier on the p95
+
+[timeouts.chair]
+ceiling_s = 7200
+
+[pins]
+# Preflight compares the CLIs it finds with these. Exact pins are a FAIL on drift, *_min a FAIL below the floor,
+# agy_seen a WARN. Add exact pins for the CLIs you run, for example:
+#   codex = "<exact version>"     codex_min = "<minimum version>"     qwen = "<exact version>"     agy_seen = "<version>"
+claude_min = "2.1.280"
+
+[preflight]
+retry_failed = true     # a provider whose free checks or canary FAIL is checked once more first (transient blips)
+
+[canary]
+prompt    = "Reply with exactly: OK"
+timeout_s = 120
+idle_s    = 60
+# cache_s = 600     # a canary that passed for the same provider, model, prompt, launch flags and CLI binary inside this many
+#                    # seconds is not called again (recorded in <state_dir>/canary-pass.json); 0 = always call. Built-in 600.
+
+# ---------------------------------------------------------------- per provider
+# Every paid call carries a reasoning effort and, where the CLI has one, an output-token cap. Advisors get the plain keys,
+# the chair the chair_* keys. A [[seat]] (or [chair]) may carry the same keys to override. No fixed wall-clock kill is
+# meant to cut a healthy answer: timeouts only catch silent (hung) seats, and any kill keeps the partial output.
+
+[providers.claude]
+bin       = "claude"
+mode      = "stream"
+reasoning_effort        = "medium"   # --effort (low|medium|high|xhigh|max)
+max_output_tokens       = 128000     # CLAUDE_CODE_MAX_OUTPUT_TOKENS: thinking + answer together, per request. Not raisable
+                                     # above the model's maximum.
+chair_reasoning_effort  = "high"
+chair_max_output_tokens = 128000
+salvage_reasoning_effort = "low"
+salvage_thinking         = "disabled"
+ignores_reasoning_cap   = true       # adaptive thinking: effort is the lever
+reasoning_form          = "effort"
+thinking_display        = "summarized"   # preflight FAILS anything but "summarized"
+safe_mode = true           # --safe-mode: no CLAUDE.md, hooks, MCP or plugins in the seat
+extra_args = []
+[providers.claude.env]
+CLAUDE_CODE_MAX_RETRIES = "1"
+
+# The blocks below only matter once a seat uses that provider; a provider with no seat is not checked.
+[providers.codex]
+bin       = "codex"
+mode      = "buffered"
+reasoning_effort        = "medium"   # -c model_reasoning_effort=...; this CLI has no output-token cap
+chair_reasoning_effort  = "high"
+canary_reasoning_effort = "low"
+salvage_reasoning_effort = "low"
+# council_provider = "<name>"        # a [model_providers.<name>] block in the codex config.toml with
+#                                    # stream_idle_timeout_ms >= 3600000 and retries <= 1 (the CLI's own idle timer)
+# disable_user_mcp = false           # built-in true: each MCP server in your codex config.toml named with [A-Za-z0-9_-] is turned off
+#                                    # for the seat (-c mcp_servers.<name>.enabled=false); false leaves them loaded
+progress_signal   = "otel"
+progress_event    = "codex.sse_event"
+progress_exclude  = ["event.kind=keepalive"]
+negative_evidence = true
+reasoning_summary = "detailed"
+terminal_lines = ["stream disconnected before completion: idle timeout waiting for SSE"]
+extra_args = []
+# accepted_limits = ["stream_idle_timeout_ms=300000"]   # only if no council provider block can be used
+
+[providers.agy]
+bin       = "agy"
+mode      = "buffered"
+extra_args = []
+disable_auto_update = true   # council.py sets AGY_CLI_DISABLE_AUTO_UPDATE=true for every agy child, so agy never updates behind the pins
+progress_signal   = "none"
+negative_evidence = false
+terminal_lines = ["[agy] print timeout after", ["AGY_ERROR:", "\"status\":\"RESOURCE_EXHAUSTED\""]]
+salvage_model_tier = "Low"   # answer-salvage call: the label tier is agy's only reasoning lever
+
+[providers.openrouter]
+mode      = "stream"
+base_url  = "https://openrouter.ai/api/v1"
+key_env   = "OPENROUTER_API_KEY"
+reasoning_effort        = "medium"
+max_output_tokens       = 131072
+fallback_max_output_tokens = 131072  # fast-fail chain: max_tokens of the rerouted and stand-in calls; a seat may override
+ignores_reasoning_cap   = true
+reasoning_form          = "effort"
+chair_reasoning_effort  = "high"
+chair_max_output_tokens = 131072
+canary_reasoning_effort = "low"
+extra_args = []
+# Request `provider` block defaults, soft only: never `only` or allow_fallbacks = false. A seat's provider_prefs overlays this.
+[providers.openrouter.provider]
+require_parameters = true
+
+[timeouts.claude]
+idle_s = 240
+
+[timeouts.codex]
+idle_s         = 240       # unused in buffered mode
+# 0 = no ceiling: a hedged codex call ends on exit, a terminal line, the CLI's own idle timeout, or `kill -TERM <runner_pid>`.
+# Valid only while codex is in [hedge] providers with the hedge on (preflight FAILs it otherwise).
+ceiling_s      = 0
+
+[timeouts.agy]
+idle_s         = 240       # unused in buffered mode
+base_timeout_s = 900
+cold_at_ceiling = true     # no latency samples: the deadline starts at ceiling_s (a kill in the silent phase loses everything)
+min_timeout_s  = 3600
+ceiling_s      = 3600
+
+[timeouts.openrouter]
+idle_s = 240

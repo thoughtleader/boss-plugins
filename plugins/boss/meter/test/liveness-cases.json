@@ -1,0 +1,32 @@
+{
+  "_doc": "Shared by test_progress.py and progress.test.mjs. 'base' is merged with each case's 'snap' (shallow; writer/owner replaced whole). probe: boot_id, procs {pid: start_ticks}, sessions {session_id: status}.",
+  "now": "2026-10-31T08:00:00Z",
+  "base": {
+    "schema": "boss.progress/1", "tool": "council", "run_id": "r1", "state": "running", "seq": 1, "items": [],
+    "updated_at": "2026-10-31T07:59:58Z", "heartbeat_at": "2026-10-31T07:59:58Z", "heartbeat_interval_s": 3,
+    "last_progress_at": "2026-10-31T07:59:58Z",
+    "writer": {"pid": 100, "start_ticks": 5000, "boot_id": "B", "kind": "process"}
+  },
+  "probe": {"boot_id": "B", "procs": {"100": 5000, "200": 7}, "sessions": {"sid-busy": "busy", "sid-idle": "idle"}},
+  "cases": [
+    {"name": "fresh process writer", "snap": {}, "expect": {"status": "running", "quiet": false}},
+    {"name": "terminal wins even if pid dead", "snap": {"state": "done", "writer": {"pid": 999, "start_ticks": 1, "boot_id": "B", "kind": "process"}}, "expect": {"status": "ended"}},
+    {"name": "dead pid", "snap": {"writer": {"pid": 999, "start_ticks": 5000, "boot_id": "B", "kind": "process"}}, "expect": {"status": "dead"}},
+    {"name": "pid reuse via start_ticks", "snap": {"writer": {"pid": 100, "start_ticks": 4999, "boot_id": "B", "kind": "process"}}, "expect": {"status": "dead"}},
+    {"name": "earlier boot", "snap": {"writer": {"pid": 100, "start_ticks": 5000, "boot_id": "A", "kind": "process"}}, "expect": {"status": "dead"}},
+    {"name": "stalled heartbeat", "snap": {"heartbeat_at": "2026-10-31T07:58:00Z"}, "expect": {"status": "stalled"}},
+    {"name": "stall threshold scales with interval", "snap": {"heartbeat_at": "2026-10-31T07:58:00Z", "heartbeat_interval_s": 30}, "expect": {"status": "running"}},
+    {"name": "resume grace", "snap": {"heartbeat_at": "2026-10-31T07:58:00Z"}, "resumed_at": "2026-10-31T07:59:50Z", "expect": {"status": "running"}},
+    {"name": "no progress fact", "snap": {"last_progress_at": "2026-10-31T07:50:00Z"}, "expect": {"status": "running", "quiet": true, "no_progress_s": 600}},
+    {"name": "process writer waiting_input", "snap": {"state": "waiting_input"}, "expect": {"status": "waiting_input"}},
+    {"name": "oneshot: writer pid dead, owner busy", "snap": {"writer": {"pid": 999, "start_ticks": null, "boot_id": "B", "kind": "oneshot"}, "heartbeat_at": null, "updated_at": "2026-10-31T07:00:00Z", "owner": {"session_id": "sid-busy"}}, "expect": {"status": "running"}},
+    {"name": "oneshot: owner idle", "snap": {"writer": {"pid": 999, "kind": "oneshot"}, "owner": {"session_id": "sid-idle"}}, "expect": {"status": "waiting_input"}},
+    {"name": "oneshot: owner gone", "snap": {"writer": {"pid": 999, "kind": "oneshot"}, "owner": {"session_id": "sid-gone"}}, "expect": {"status": "dead"}},
+    {"name": "paused run whose owner session is gone is not dead", "snap": {"paused": true, "state": "waiting_input", "writer": {"pid": 999, "kind": "oneshot"}, "owner": {"session_id": "sid-gone"}}, "expect": {"status": "waiting_input", "reason": "paused by owner"}},
+    {"name": "paused wins over a dead process writer", "snap": {"paused": true, "state": "waiting_input", "writer": {"pid": 999, "start_ticks": 5000, "boot_id": "B", "kind": "process"}}, "expect": {"status": "waiting_input", "reason": "paused by owner"}},
+    {"name": "paused:false is still dead when the owner is gone", "snap": {"paused": false, "writer": {"pid": 999, "kind": "oneshot"}, "owner": {"session_id": "sid-gone"}}, "expect": {"status": "dead"}},
+    {"name": "terminal beats paused", "snap": {"paused": true, "state": "done"}, "expect": {"status": "ended"}},
+    {"name": "unknown major", "snap": {"schema": "boss.progress/2"}, "expect": {"status": "unsupported"}},
+    {"name": "garbage schema", "snap": {"schema": "nope"}, "expect": {"status": "unsupported"}}
+  ]
+}

@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The suites call jq, git, the sqlite3 CLI and ripgrep, and expect a current bash.
+      - name: Install test tools (ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq ripgrep sqlite3
+
+      - name: Install test tools (macos)
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash jq ripgrep
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+      - name: Tests
+        run: bash scripts/test-all.sh
+
+      - name: Secret scan
+        run: bash scripts/secret-scan.sh .
+
+      # macOS ships bash 3.2 as /bin/bash and the steps above put Homebrew's bash 5 first, so they cannot catch a bash 4 construct.
+      # These run the shipped scripts as a macOS user would. The first three are hard checks (fail closed, no bash 4, no /proc).
+      - name: Shipped scripts under /bin/bash 3.2 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          /bin/bash --version | head -1
+          rc=0; /bin/bash plugins/boss/bin/boss-memclean 2>/dev/null || rc=$?
+          [ "$rc" = 2 ] || { echo "boss-memclean: want exit 2 (Linux only), got $rc"; exit 1; }
+          rc=0; /bin/bash plugins/boss/council/tools/secret-scan.sh --leftover 2>/dev/null || rc=$?
+          [ "$rc" = 2 ] || { echo "secret-scan --leftover: want exit 2 (fail closed without /proc), got $rc"; exit 1; }
+          /bin/bash scripts/secret-scan.sh .
+
+      # The shell suites under /bin/bash 3.2 as well: the top-level script is 3.2; what they spawn by name still finds Homebrew's bash.
+      # Not yet seen green on a macOS runner, so a failure here is reported but does not fail the job; make it a hard check once it is.
+      - name: Shell suites under /bin/bash 3.2 (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: /bin/bash scripts/test-all.sh export-tests skills-tests
+
+  # The council needs Python 3.11+ (tomllib). On 3.10 every entry script must say so and exit 2, not traceback.
+  # Run through the real shebang: it execs `python3 -Es`, so this also covers the /bin/sh line.
+  python-310-guard:
+    name: council guard (python 3.10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Entry scripts refuse Python 3.10 plainly
+        run: |
+          python3 --version
+          for f in council.py tools/council-probe.py tools/liveness-probe.py; do
+            rc=0; out=$(plugins/boss/council/$f preflight 2>&1) || rc=$?
+            [ "$rc" = 2 ] || { echo "$f: want exit 2, got $rc"; echo "$out"; exit 1; }
+            echo "$out" | grep -q 'council needs Python 3.11+ (found 3\.10' || { echo "$f: guard message missing"; echo "$out"; exit 1; }
+            echo "$out" | grep -q Traceback && { echo "$f: traceback"; exit 1; }
+            echo "ok $f"
+          done

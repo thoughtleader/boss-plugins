@@ -1,0 +1,30 @@
+#!/bin/sh
+# Root-owned page-cache reclaim for WSL2. Install to /usr/local/sbin/wsl-reclaim (root:root 0755) and run from root's crontab.
+# Acts only when Cached >= MIN_CACHED_MB and at most once per MIN_INTERVAL_S. Logs every run, acted or not.
+# Never kills anything. drop_caches=1 (page cache only; council advised against 3).
+MIN_CACHED_MB=${MIN_CACHED_MB:-6000}
+MIN_INTERVAL_S=${MIN_INTERVAL_S:-3600}
+LOG=/var/log/wsl-reclaim.log
+STAMP=/var/run/wsl-reclaim.last
+[ -r /proc/meminfo ] || { echo "wsl-reclaim: no /proc/meminfo (not Linux/WSL); nothing done" >&2; exit 0; }
+now=$(date +%s)
+cached=$(awk '/^Cached:/{print int($2/1024)}' /proc/meminfo)
+anon=$(awk '/^AnonPages:/{print int($2/1024)}' /proc/meminfo)
+avail=$(awk '/^MemAvailable:/{print int($2/1024)}' /proc/meminfo)
+last=$(cat "$STAMP" 2>/dev/null || echo 0)
+ts=$(date '+%F %T')
+if [ "$cached" -lt "$MIN_CACHED_MB" ]; then
+  echo "$ts SKIP cached=${cached}MB < ${MIN_CACHED_MB}MB anon=${anon}MB avail=${avail}MB" >> "$LOG"; exit 0
+fi
+if [ $((now - last)) -lt "$MIN_INTERVAL_S" ]; then
+  echo "$ts SKIP rate-limit last=$((now-last))s ago cached=${cached}MB" >> "$LOG"; exit 0
+fi
+sync
+echo 1 > /proc/sys/vm/drop_caches
+echo 1 > /proc/sys/vm/compact_memory
+echo "$now" > "$STAMP"
+c2=$(awk '/^Cached:/{print int($2/1024)}' /proc/meminfo)
+echo "$ts RECLAIM cached ${cached}MB -> ${c2}MB anon=${anon}MB avail_before=${avail}MB" >> "$LOG"
+# keep log small
+[ "$(wc -l < "$LOG")" -gt 3000 ] && tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+exit 0

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Memory cleanup for WSL and Linux dev boxes (exits 2 with a message on any other OS). Dry-run by default; pass --apply to kill.
+#   boss-memclean [--apply] [--max-age HOURS] [--keep-ports 3000,5173] [--kill-dev] [--kill-chrome]
+# Targets:
+#   1. Orphaned MCP helpers (chrome-devtools-mcp, mcp-pdf-server, npm exec) whose parent chain has no claude process
+#   2. Idle dev servers (next-server, vite) older than --max-age (default 2h) with no connections for 3 runs
+#      (1 run under memory pressure >= PRESSURE_PCT, default 70), excluding --keep-ports
+#   3. Orphaned headless Chrome/Canary launched by MCP (ppid 1)
+# Live MCP servers are never killed.
+# Every line is timestamped; log and state live in <boss data dir>/memclean (path from lib/paths.js; MEMCLEAN_DIR overrides).
+# Line kinds: RUN-START, SCAN, SPARE (considered, not killed, with reason), IDLE (strike n/N), KILL, WOULD-KILL, RUN-END
+set -u
+# Linux and WSL only: it reads /proc and uses free, ss and ps etimes, and its seen-set is a bash 4 associative array.
+# Checked first, before anything bash 4 or GNU-only runs, so macOS (/bin/bash 3.2) and Git Bash get a clear message, not a stack of errors.
+if [ "$(uname -s 2>/dev/null)" != Linux ]; then
+  echo "boss-memclean: Linux and WSL only (needs /proc, free, ss and ps etimes); nothing was scanned or killed on $(uname -s 2>/dev/null || echo this platform)" >&2
+  exit 2
+fi
+HERE=$(cd "$(dirname "$0")" && pwd)
+if [ -z "${MEMCLEAN_DIR:-}" ]; then   # the data dir comes from lib/paths.js, the one path resolver (BOSS_DATA, ORCH_DIR, legacy dir)
+  DATA_DIR=$("$HERE/boss-node" "$HERE/../lib/paths.js" 2>/dev/null | sed -n 's/^dataDir=//p')
+  [ -n "$DATA_DIR" ] || { echo "boss-memclean: cannot resolve the boss data dir (lib/paths.js needs Node 22.13+; set BOSS_NODE or MEMCLEAN_DIR)" >&2; exit 1; }
+  MEMCLEAN_DIR=$DATA_DIR/memclean
+fi
+mkdir -p "$MEMCLEAN_DIR"
+APPLY=0; KILL_DEV=0; KILL_CHROME=0; MAX_AGE_H=2; KEEP_PORTS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply) APPLY=1 ;;
+    --kill-dev) KILL_DEV=1 ;;
+    --kill-chrome) KILL_CHROME=1 ;;
+    --max-age) MAX_AGE_H="$2"; shift ;;
+    --keep-ports) KEEP_PORTS="$2"; shift ;;
+    -h|--help) sed -n 2,11p "$0"; exit 0 ;;
+  esac; shift
+done
+MAX_AGE_S=$((MAX_AGE_H*3600))
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
+
+before=$(free -m | awk '/Mem:/{print $3}')
+total_mb=$(free -m | awk '/Mem:/{print $2}'); avail=$(free -m | awk '/Mem:/{print $7}')
+PRESSURE_PCT=${PRESSURE_PCT:-70}; pct=$((before*100/total_mb)); PRESSURE=0; IDLE_STRIKES_DEFAULT=3
+[ "$pct" -ge "$PRESSURE_PCT" ] && PRESSURE=1 && IDLE_STRIKES_DEFAULT=1
+STATE=${CLEANUP_STATE:-$MEMCLEAN_DIR/state}; IDLE_STRIKES=${IDLE_STRIKES:-$IDLE_STRIKES_DEFAULT}
+KILL_DEV=${KILL_DEV:-0}   # idle-by-connections is unreliable; log-only unless KILL_DEV=1
+KILL_CHROME=${KILL_CHROME:-0}   # ppid=1 test is wrong for Chrome; log-only unless KILL_CHROME=1
+mode=$([ $APPLY = 1 ] && echo apply || echo dry-run)
+log "RUN-START mode=$mode cached=$(awk '/^Cached:/{print int($2/1024)}' /proc/meminfo)MB anon=$(awk '/^AnonPages:/{print int($2/1024)}' /proc/meminfo)MB kill_dev=$KILL_DEV kill_chrome=$KILL_CHROME used=${before}MB (${pct}%) avail=${avail}MB pressure=$PRESSURE strikes_needed=$IDLE_STRIKES max_age=${MAX_AGE_H}h keep_ports=$KEEP_PORTS"
+
+declare -A seen; total_kb=0; kills=0; spared=0; n_mcp=0; n_dev=0
+
+has_claude_ancestor() {
+  local p=$1 i=0 a
+  while [ "$p" -gt 1 ] && [ $i -lt 12 ]; do
+    a=$(ps -o args= -p "$p" 2>/dev/null) || return 1
+    case "$a" in *claude*|*anthropic.claude-code*) return 0 ;; esac
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' '); [ -z "$p" ] && return 1; i=$((i+1))
+  done
+  return 1
+}
+port_of() { ss -ltnp 2>/dev/null | grep "pid=$1," | awk '{print $4}' | sed 's/.*://' | head -1; }
+mark() { # pid reason
+  [ -n "${seen[$1]:-}" ] && return; seen[$1]=1
+  local rss; rss=$(ps -o rss= -p "$1" | tr -d ' '); total_kb=$((total_kb+${rss:-0})); kills=$((kills+1))
+  log "$([ $APPLY = 1 ] && echo KILL || echo WOULD-KILL) pid=$1 rss=$((${rss:-0}/1024))MB $2"
+  [ $APPLY = 1 ] && kill "$1" 2>/dev/null
+}
+
+# 1 + 3: orphans
+while read -r pid ppid args; do
+  case "$args" in
+    *chrome-devtools-mcp*|*mcp-pdf-server*|*server-pdf*|*"npm exec @modelcontextprotocol"*)
+      n_mcp=$((n_mcp+1))
+      if has_claude_ancestor "$pid"; then spared=$((spared+1)); log "SPARE pid=$pid reason=live-claude-parent ${args:0:60}"
+      else mark "$pid" "reason=orphan-mcp ${args:0:70}"; fi ;;
+    *chrome*remote-debugging*|*Canary*remote-debugging*)
+      n_mcp=$((n_mcp+1))
+      if [ "$ppid" = 1 ]; then
+        if [ "$KILL_CHROME" = 1 ]; then mark "$pid" "reason=orphan-headless-chrome"; else spared=$((spared+1)); log "CANDIDATE pid=$pid reason=orphan-headless-chrome (log-only, KILL_CHROME=0)"; fi
+      else spared=$((spared+1)); log "SPARE pid=$pid reason=chrome-has-parent($ppid)"; fi ;;
+  esac
+done < <(ps -eo pid=,ppid=,args=)
+
+# 2: idle dev servers
+touch "$STATE"; newstate=$(mktemp)
+IFS=, read -ra KEEP <<<"$KEEP_PORTS"
+while read -r pid age args; do
+  case "$args" in next-server*|*"/vite"*|*"next dev"*|*"next start"*) ;; *) continue ;; esac
+  port=$(port_of "$pid"); [ -z "$port" ] && continue   # helper child; the listener carries the port
+  n_dev=$((n_dev+1)); cwd=$(readlink /proc/$pid/cwd); rss=$(( $(ps -o rss= -p "$pid" | tr -d ' ') / 1024 ))
+  id="pid=$pid port=$port rss=${rss}MB age=$((age/3600))h cwd=$cwd"
+  skip=0; for k in "${KEEP[@]}"; do [ "$port" = "$k" ] && skip=1; done
+  if [ $skip = 1 ]; then spared=$((spared+1)); log "SPARE $id reason=kept-port"; continue; fi
+  if [ "$age" -lt "$MAX_AGE_S" ]; then spared=$((spared+1)); log "SPARE $id reason=younger-than-${MAX_AGE_H}h"; continue; fi
+  conns=$(ss -tn state established "( sport = :$port )" 2>/dev/null | tail -n +2 | wc -l)
+  if [ "$conns" -gt 0 ]; then spared=$((spared+1)); log "SPARE $id reason=active-connections($conns) strikes-reset"; continue; fi
+  key="$pid:$port"; n=$(( $(grep -m1 "^$key " "$STATE" | awk '{print $2}') + 1 ))
+  echo "$key $n" >> "$newstate"
+  if [ "$n" -ge "$IDLE_STRIKES" ]; then
+    if [ "$KILL_DEV" = 1 ]; then
+      mark "$pid" "reason=idle-dev-server strikes=$n/$IDLE_STRIKES $id"
+      [ $APPLY = 1 ] && pkill -P "$pid" 2>/dev/null
+    else
+      spared=$((spared+1)); log "CANDIDATE $id strikes=$n/$IDLE_STRIKES (log-only, KILL_DEV=0)"
+    fi
+  else
+    spared=$((spared+1)); log "IDLE $id strike=$n/$IDLE_STRIKES (not killed yet)"
+  fi
+done < <(ps -eo pid=,etimes=,args=)
+if [ $APPLY = 1 ]; then mv "$newstate" "$STATE"; else rm -f "$newstate"; fi
+
+after=$(free -m | awk '/Mem:/{print $3}')
+log "RUN-END mode=$mode scanned(mcp=$n_mcp dev=$n_dev) killed=$kills spared=$spared est_freed=$((total_kb/1024))MB used_after=${after}MB"
+LOG=$MEMCLEAN_DIR/memclean.log; [ -f "$LOG" ] && [ "$(wc -l < "$LOG")" -gt 6000 ] && tail -n 4000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+exit 0

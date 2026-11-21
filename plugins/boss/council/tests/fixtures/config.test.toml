@@ -1,0 +1,240 @@
+# Test fixture: a full-roster council config for the unit tests (every provider block, five seats, all the policy tables).
+# tests/__init__.py points COUNCIL_CONFIG here so the suite never depends on a user's own config.toml.
+# The model ids and provider names below are the ones the tests assert on (public ids only). The shipped default for
+# real use is ../../config.default.toml.
+
+state_dir   = "~/.claude-council"
+
+answer_reserve_tokens = 16000
+
+[chair]
+provider = "claude"
+model    = "claude-opus-5-5"
+
+[[seat]]
+id       = "claude"
+provider = "claude"
+model    = "claude-opus-5-5"
+
+[[seat]]
+id       = "codex"
+provider = "codex"
+model    = "gpt-6-astra"
+
+[[seat]]
+id       = "agy"
+provider = "agy"
+model    = "Gemini 3.8 Flash (Medium)"
+
+[[seat]]
+id       = "openrouter"
+provider = "openrouter"
+model    = "z-ai/glm-5.3"
+max_output_tokens = 131072
+reasoning_effort  = "high"
+salvage_reasoning = "low"
+fallback_model = "moonshotai/kimi-k3.1-pro"
+
+[[seat]]
+id       = "deepseek"
+provider = "openrouter"
+model    = "deepseek/deepseek-v4-pro-0813"
+max_output_tokens     = 131072
+reasoning_effort      = "high"
+reasoning_form        = "effort"
+ignores_reasoning_cap = true
+salvage_reasoning     = "none"
+fallback_model = "qwen/qwen3.8-max-0902"
+
+[lenses]
+enabled = true
+[lenses.seat]
+claude     = "architecture: structure, interfaces, long-term maintainability and what is hard to change later"
+codex      = "operations: what breaks in practice, failure modes, rollout, cost and who has to run it"
+agy        = "product: the user's real need, scope, and what the simplest thing that works would be"
+openrouter = "security and risk: what can go wrong, abuse, data exposure and unstated assumptions"
+deepseek   = "contrarian: argue the strongest case against the leading option, then say if it survives"
+
+[grounded]
+enabled         = true
+default_root    = "repo"
+restricted      = true
+codex           = true
+probes          = ["codex"]
+line_window     = 6
+max_file_bytes  = 2000000
+max_images      = 8
+max_image_bytes = 15000000
+max_bad_listed  = 8
+
+[salvage]
+enabled           = true
+max_output_tokens = 8000
+timeout           = 600
+max_partial_chars = 120000
+chair_max_output_tokens = 16000
+chair_timeout           = 1200
+
+[answer_check]
+enabled         = true
+min_chars       = 16
+min_prose_chars = 200
+
+[hedge]
+enabled   = true
+providers = ["codex"]
+factor    = 2.5
+floor_s   = 900
+cap_s     = 1800
+cold_s    = 1200
+quiet_s   = 120
+recheck_s = 30
+max_defer = 2.0
+
+[fallback]
+enabled = true
+
+[liveness]
+signals         = true
+sample_s        = 10
+grace_s         = 120
+no_conn_samples = 18
+
+[status]
+enabled    = true
+interval_s = 3
+progress   = true
+
+[policy]
+max_anthropic_advisors = 1
+
+[quorum]
+min_ok            = "n-1"
+straggler_grace_s = 90
+cut_stream_stragglers = false
+
+[timeouts.default]
+idle_s           = 240
+ceiling_s        = 7200
+grace_s          = 5
+max_extensions   = 1
+extension_factor = 1.5
+base_timeout_s   = 600
+min_timeout_s    = 600
+
+[timeouts.adaptive]
+window_n      = 50
+min_samples   = 5
+size_exponent = 0.5
+safety        = 1.5
+
+[timeouts.chair]
+ceiling_s = 7200
+
+[pins]
+codex     = "0.163.0"
+codex_min = "0.162.0"
+qwen      = "0.25.3"
+claude_min = "2.1.280"
+agy_seen  = "1.5.6"
+
+[preflight]
+retry_failed = true
+
+[canary]
+prompt    = "Reply with exactly: OK"
+timeout_s = 120
+idle_s    = 60
+cache_s   = 0       # the canary pass cache is off in the suite; its own tests turn it on
+
+[providers.claude]
+bin       = "claude"
+mode      = "stream"
+reasoning_effort        = "medium"
+max_output_tokens       = 128000
+chair_reasoning_effort  = "high"
+chair_max_output_tokens = 128000
+salvage_reasoning_effort = "low"
+salvage_thinking         = "disabled"
+ignores_reasoning_cap   = true
+reasoning_form          = "effort"
+thinking_display        = "summarized"
+safe_mode = true
+extra_args = []
+[providers.claude.env]
+CLAUDE_CODE_MAX_RETRIES = "1"
+
+[providers.codex]
+bin       = "codex"
+mode      = "buffered"
+reasoning_effort        = "medium"
+chair_reasoning_effort  = "high"
+canary_reasoning_effort = "low"
+salvage_reasoning_effort = "low"
+council_provider = "openai-council"
+progress_signal   = "otel"
+progress_event    = "codex.sse_event"
+progress_exclude  = ["event.kind=keepalive"]
+negative_evidence = true
+reasoning_summary = "detailed"
+terminal_lines = ["stream disconnected before completion: idle timeout waiting for SSE"]
+extra_args = []
+
+[timeouts.claude]
+idle_s = 240
+
+[timeouts.codex]
+idle_s         = 240
+ceiling_s      = 0
+
+[providers.agy]
+bin       = "agy"
+mode      = "buffered"
+extra_args = []
+disable_auto_update = true
+progress_signal   = "none"
+negative_evidence = false
+terminal_lines = ["[agy] print timeout after", ["AGY_ERROR:", "\"status\":\"RESOURCE_EXHAUSTED\""]]
+salvage_model_tier = "Low"
+
+[providers.qwen]
+bin       = "qwen"
+mode      = "stream"
+settings_path           = "~/.qwen/settings.json"
+reasoning_effort        = "medium"
+max_output_tokens       = 65536
+ignores_reasoning_cap   = true
+reasoning_form          = "effort"
+chair_reasoning_effort  = "high"
+chair_max_output_tokens = 65536
+canary_reasoning_effort = "low"
+extra_args = []
+
+[providers.openrouter]
+mode      = "stream"
+base_url  = "https://openrouter.ai/api/v1"
+key_env   = "OPENROUTER_API_KEY"
+reasoning_effort        = "medium"
+max_output_tokens       = 131072
+fallback_max_output_tokens = 131072
+ignores_reasoning_cap   = true
+reasoning_form          = "effort"
+chair_reasoning_effort  = "high"
+chair_max_output_tokens = 131072
+canary_reasoning_effort = "low"
+extra_args = []
+[providers.openrouter.provider]
+require_parameters = true
+
+[timeouts.agy]
+idle_s         = 240
+base_timeout_s = 900
+cold_at_ceiling = true
+min_timeout_s  = 3600
+ceiling_s      = 3600
+
+[timeouts.qwen]
+idle_s = 240
+
+[timeouts.openrouter]
+idle_s = 240

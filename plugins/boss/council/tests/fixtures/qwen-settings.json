@@ -1,0 +1,63 @@
+{
+  "env": {
+    "OPENROUTER_API_KEY_PERSONAL": "sk-or-v1-TESTSECRET0000000000000000"
+  },
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "qwen/qwen3.6-plus",
+        "name": "Qwen 3.6 Plus (test)",
+        "envKey": "OPENROUTER_API_KEY_PERSONAL",
+        "baseUrl": "https://openrouter.test/api/v1",
+        "generationConfig": {
+          "timeout": 1260000,
+          "maxRetries": 1,
+          "samplingParams": {
+            "temperature": 0.3
+          }
+        }
+      },
+      {
+        "id": "qwen/short-timeout",
+        "name": "fail: timeout 120000",
+        "envKey": "OPENROUTER_API_KEY_PERSONAL",
+        "baseUrl": "https://openrouter.test/api/v1",
+        "generationConfig": {
+          "timeout": 120000,
+          "maxRetries": 1
+        }
+      },
+      {
+        "id": "qwen/many-retries",
+        "name": "fail: maxRetries 3",
+        "envKey": "OPENROUTER_API_KEY_PERSONAL",
+        "baseUrl": "https://openrouter.test/api/v1",
+        "generationConfig": {
+          "timeout": 1260000,
+          "maxRetries": 3
+        }
+      },
+      {
+        "id": "qwen/no-key",
+        "name": "fail: key not set",
+        "envKey": "TEST_QWEN_KEY_NOT_SET",
+        "baseUrl": "https://openrouter.test/api/v1",
+        "generationConfig": {
+          "timeout": 1260000,
+          "maxRetries": 1
+        }
+      }
+    ]
+  },
+  "security": {
+    "auth": {
+      "selectedType": "openai"
+    }
+  },
+  "model": {
+    "name": "qwen/qwen3.6-plus"
+  },
+  "general": {
+    "enableAutoUpdate": false
+  }
+}

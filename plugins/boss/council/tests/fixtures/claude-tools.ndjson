@@ -1,0 +1,7 @@
+{"type": "system", "subtype": "init", "tools": ["Glob", "Grep", "Read"], "mcp_servers": [], "permissionMode": "default", "model": "claude-opus-5-5", "cwd": "/REPO", "session_id": "S"}
+{"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Let me read the file first. "}}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/REPO/src/app.js"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "1\tconst a = 1;\n2\tif (!user) return null;"}]}}
+{"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "The guard is at `src/app.js:2`"}}}
+{"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": " `if (!user) return null;`.\nVerdict: APPROVE\nConfidence: high"}}}
+{"type": "result", "subtype": "success", "is_error": false, "result": "The guard is at `src/app.js:2` `if (!user) return null;`.\nVerdict: APPROVE\nConfidence: high", "stop_reason": "end_turn", "num_turns": 2, "usage": {"input_tokens": 10, "output_tokens": 20}, "total_cost_usd": 0.01}

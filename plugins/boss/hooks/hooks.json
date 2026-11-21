@@ -1,0 +1,153 @@
+{
+  "description": "Boss orchestrator hooks: wfp usage workflow, attempt ledger, return cap, stop gate, orchestrator guard, role write guard",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js\" session",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-tools-patch.js\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/stale-sync.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orch-attempts.js\" session",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js\" substart",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js\" substop",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'd=$(cat; printf x); d=${d%x}; case $d in *\\\"session_id\\\":\\\"*) sid=${d#*\\\"session_id\\\":\\\"}; sid=${sid%%\\\"*}; [ \"$(sh \"${0%/*}/boss-skip\" lease \"$sid\" 2>/dev/null)\" = skip ] && exit 0;; esac; printf %s \"$d\" | \"$0\" \"$@\"' \"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orch-attempts.js\" substop",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orch-return-cap.js\" substop",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js\" pretool",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orch-attempts.js\" pretool",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orch-stop-gate.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'd=$(cat; printf x); d=${d%x}; case $d in *\\\"agent_id\\\":\\\"[!\\\"]*) exit 0;; esac; case $d in *\\\"session_id\\\":\\\"*) sid=${d#*\\\"session_id\\\":\\\"}; sid=${sid%%\\\"*}; [ \"$(sh \"${0%/*}/boss-skip\" guard \"$sid\" 2>/dev/null)\" = skip ] && exit 0;; esac; printf %s \"$d\" | \"$0\" \"$@\"' \"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orchestrator-guard.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'd=$(cat; printf x); d=${d%x}; case $d in *orch-planner*|*orch-plan-checker*|*orch-reviewer*|*orch-scout*) ;; *) exit 0;; esac; printf %s \"$d\" | \"$0\" \"$@\"' \"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/role-write-guard.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js\" prompt",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orch-attempts.js\" prompt",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'd=$(cat; printf x); d=${d%x}; case $d in *\\\"session_id\\\":\\\"*) sid=${d#*\\\"session_id\\\":\\\"}; sid=${sid%%\\\"*}; [ \"$(sh \"${0%/*}/boss-skip\" lease \"$sid\" 2>/dev/null)\" = skip ] && exit 0;; esac; printf %s \"$d\" | \"$0\" \"$@\"' \"${CLAUDE_PLUGIN_ROOT}/bin/boss-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/orch-attempts.js\" stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "modules": [
+    "./meter-register.js"
+  ]
+}

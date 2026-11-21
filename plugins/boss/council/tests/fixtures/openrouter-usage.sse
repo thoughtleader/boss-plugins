@@ -1,0 +1,10 @@
+: OPENROUTER PROCESSING
+
+data: {"id": "gen-U", "object": "chat.completion.chunk", "model": "z-ai/glm-5", "choices": [{"index": 0, "delta": {"content": "", "reasoning": "thinking"}, "finish_reason": null}]}
+
+data: {"id": "gen-U", "object": "chat.completion.chunk", "model": "z-ai/glm-5", "choices": [{"index": 0, "delta": {"content": "Four."}, "finish_reason": "stop"}]}
+
+data: {"id": "gen-U", "object": "chat.completion.chunk", "model": "z-ai/glm-5", "choices": [], "usage": {"prompt_tokens": 450, "completion_tokens": 55024, "total_tokens": 55474, "cost": 0.10591608, "completion_tokens_details": {"reasoning_tokens": 38208}, "cost_details": {"upstream_inference_cost": 0.1}}}
+
+data: [DONE]
+

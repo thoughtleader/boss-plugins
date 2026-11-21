@@ -1,0 +1,40 @@
+#!/bin/sh
+# boss-node: run a script with a usable Node >= 22.13. Hooks call it by full path:
+#   "${CLAUDE_PLUGIN_ROOT}/bin/boss-node" "${CLAUDE_PLUGIN_ROOT}/<script>" <verb>
+# Candidates, in order:
+#   1. $BOSS_NODE, when set: probed with `node -v` and the version gate (explicit override, so it is checked).
+#   2. `node` on PATH, the normal path: executed as it is, with NO `node -v` probe (the probe was a second node launch on
+#      every hook call, about 3 ms). `command -v` is not trusted: it can return a symlink the user cannot execute, so
+#      the file must pass `[ -x ]`, a shell builtin, or this step is skipped. A PATH node older than 22.13 is not detected
+#      here: the hook script then fails inside node (a non-2 exit, which hooks treat as non-blocking, fail open).
+#   3. the newest ~/.nvm/versions/node/v*/bin/node that passes `node -v` and the version gate (only when 1 and 2 gave none).
+# When none works: one stderr line, exit 1 (hooks treat that as non-blocking).
+
+ok_node() { # ok_node <path>: prints nothing, returns 0 when it runs and is >= 22.13
+  [ -n "$1" ] || return 1
+  v=$("$1" -v 2>/dev/null) || return 1
+  v=${v#v}
+  major=${v%%.*}
+  rest=${v#*.}
+  minor=${rest%%.*}
+  case "$major$minor" in *[!0-9]*|'') return 1 ;; esac
+  [ "$major" -gt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -ge 13 ]; }
+}
+
+pick=""
+if [ -n "${BOSS_NODE:-}" ] && ok_node "$BOSS_NODE"; then pick=$BOSS_NODE; fi
+if [ -z "$pick" ]; then
+  p=$(command -v node 2>/dev/null) || p=""
+  if [ -n "$p" ] && [ -x "$p" ] && [ ! -d "$p" ]; then pick=$p; fi # no `node -v` probe on the normal path
+fi
+if [ -z "$pick" ] && [ -d "${HOME:-/nonexistent}/.nvm/versions/node" ]; then
+  for p in $(ls -d "$HOME"/.nvm/versions/node/v*/bin/node 2>/dev/null | sort -rV); do
+    if [ -x "$p" ] && ok_node "$p"; then pick=$p; break; fi
+  done
+fi
+
+if [ -z "$pick" ]; then
+  echo "boss-node: no Node >= 22.13 found (set BOSS_NODE to a node binary)" >&2
+  exit 1
+fi
+exec "$pick" "$@"

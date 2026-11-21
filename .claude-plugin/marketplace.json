@@ -1,0 +1,24 @@
+{
+  "name": "boss-plugins",
+  "metadata": {
+    "description": "Boss orchestration plugins for Claude Code."
+  },
+  "owner": {
+    "name": "Michael Evan",
+    "url": "https://michaelevan.com"
+  },
+  "plugins": [
+    {
+      "name": "boss",
+      "source": "./plugins/boss",
+      "description": "Boss toolkit for Claude Code: plan-driven orchestrator (manifest/ledger engine, usage policy, orch-* agents, /boss:* skills and hooks), the chat meter, and council.",
+      "author": {
+        "name": "Michael Evan",
+        "url": "https://michaelevan.com"
+      },
+      "homepage": "https://github.com/thoughtleader/boss-plugins",
+      "repository": "https://github.com/thoughtleader/boss-plugins",
+      "version": "0.4.0"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "boss",
+  "version": "0.4.0",
+  "description": "Boss toolkit for Claude Code: plan-driven orchestrator (manifest/ledger engine, usage policy, orch-* agents, /boss:* skills and hooks), the chat meter, and council.",
+  "author": {
+    "name": "Michael Evan",
+    "url": "https://michaelevan.com"
+  },
+  "homepage": "https://github.com/thoughtleader/boss-plugins",
+  "repository": "https://github.com/thoughtleader/boss-plugins",
+  "license": "MIT",
+  "userConfig": {
+    "progress_dir": {
+      "type": "string",
+      "title": "Boss progress folder",
+      "description": "Folder containing runs/<tool>/<run>/progress.json. Empty uses BOSS_PROGRESS_DIR or ~/.claude/boss.",
+      "default": ""
+    },
+    "poll_seconds": {
+      "type": "number",
+      "title": "Refresh interval",
+      "description": "Seconds between read-only progress refreshes.",
+      "default": 3
+    }
+  }
+}

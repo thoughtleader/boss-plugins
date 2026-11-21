@@ -1,0 +1,54 @@
+#!/bin/sh
+# boss-skip <guard|lease> <sid>: prints `skip` when the hook's node run would provably do nothing for this session.
+# Anything else (no output) means "run node as before". Called only by the sh prefilters in hooks/hooks.json, which
+# start node only when this does not print `skip`, so a missing, unreadable or broken helper just means node runs.
+# Portable sh (macOS, Linux): no bashisms, no `.`/source, never exits 2, prints nothing on any doubt.
+#   guard  orchestrator-guard.js: the session's warning slot is spent (<state>/<sid>.b1) or off (<state>/<sid>.off).
+#          The guard returns silently in both cases and writes nothing, so node adds nothing.
+#   lease  orch-attempts.js stop/substop: <data>/leases/ exists, is readable, and no lease file in it (nor ACTIVE.lease) contains this sid.
+#          A missing or unreadable leases/ dir prints nothing (node runs).
+#          Those modes return before any write when the session holds no lease. The grep is a substring test (a
+#          superset of lease-store.heldBy), so a lease holder always reaches node.
+# The data dir mirrors lib/paths.js dataDir(): ORCH_DIR, BOSS_DATA, <config dir>/orchestrator when its runs/ exists,
+# else <config dir>/boss-data; the config dir is CLAUDE_CONFIG_DIR or $HOME/.claude. Empty counts as unset.
+
+mode=${1:-}
+sid=${2:-}
+case $sid in '' | *[!A-Za-z0-9._-]*) exit 0 ;; esac
+[ "${#sid}" -le 128 ] || exit 0
+
+data=""
+if [ -n "${ORCH_DIR:-}" ]; then
+  data=$ORCH_DIR
+elif [ -n "${BOSS_DATA:-}" ]; then
+  data=$BOSS_DATA
+else
+  cfg=${CLAUDE_CONFIG_DIR:-}
+  if [ -z "$cfg" ]; then
+    [ -n "${HOME:-}" ] || exit 0
+    cfg=$HOME/.claude
+  fi
+  if [ -e "$cfg/orchestrator/runs" ]; then data=$cfg/orchestrator; else data=$cfg/boss-data; fi
+fi
+
+case $mode in
+  guard)
+    # the guard's own sid test: [A-Za-z0-9_-]{8,80}; anything else goes to node
+    case $sid in *.*) exit 0 ;; esac
+    [ "${#sid}" -ge 8 ] && [ "${#sid}" -le 80 ] || exit 0
+    state=${ORCH_GUARD_STATE:-}
+    [ -n "$state" ] || state=$data/guard-state
+    if [ -e "$state/$sid.b1" ] || [ -e "$state/$sid.off" ]; then echo skip; fi
+    ;;
+  lease)
+    # only a leases/ dir that exists and is readable can show "no lease"; a missing or unreadable one is doubt: node runs
+    [ -d "$data/leases" ] && [ -r "$data/leases" ] && [ -x "$data/leases" ] || exit 0
+    set -- "$data"/leases/*.json
+    [ -e "$1" ] || set --
+    if [ -e "$data/ACTIVE.lease" ]; then set -- "$@" "$data/ACTIVE.lease"; fi
+    if [ "$#" -eq 0 ]; then echo skip; exit 0; fi
+    grep -qsF -e "$sid" -- "$@" 2>/dev/null
+    [ "$?" -eq 1 ] && echo skip
+    ;;
+esac
+exit 0

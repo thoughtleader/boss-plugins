@@ -1,0 +1,18 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","provider":"TestProvider","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"1"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","provider":"TestProvider","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":".  **An"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","provider":"TestProvider","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"alyze the Request:"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","provider":"TestProvider","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"**\n    *  "},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","provider":"TestProvider","choices":[{"index":0,"delta":{"content":"OK","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","provider":"TestProvider","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":null},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","provider":"TestProvider","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":17,"completion_tokens":88,"total_tokens":105}}
+
+data: [DONE]
+

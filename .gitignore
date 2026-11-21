@@ -1,0 +1,12 @@
+/runs/
+/leases/
+/state/
+/handoffs/
+*.db
+*.log
+*.html
+*.vsix
+node_modules/
+.DS_Store
+__pycache__/
+*.pyc

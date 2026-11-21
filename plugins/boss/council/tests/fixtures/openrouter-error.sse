@@ -1,0 +1,7 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","choices":[{"index":0,"delta":{"content":"Partial answer so far","role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"gen-TEST","object":"chat.completion.chunk","model":"z-ai/glm-5","error":{"code":"server_error","message":"Provider disconnected"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+
+data: [DONE]
