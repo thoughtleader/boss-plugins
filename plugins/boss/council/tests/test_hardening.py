@@ -180,7 +180,10 @@ class MissingCli(Base):
                 by, sleep = self.rows(name)
                 self.assertIn("failed twice", by["version"].detail)
                 self.assertNotIn("not found on PATH", by["version"].detail)
-                sleep.assert_called_once_with(preflight.FREE_RETRY_DELAY_S)
+                # time.sleep is the shared module function, so subprocess's own wait polling
+                # (short sleeps from 0.001 s) can land on the mock too; count only the retry delay.
+                retry = mock.call(preflight.FREE_RETRY_DELAY_S)
+                self.assertEqual([c for c in sleep.call_args_list if c == retry], [retry])
 
 
 class BadToml(Base):
