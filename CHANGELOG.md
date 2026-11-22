@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 (2026-11-22)
+
+### Fixed
+- The council status test no longer flakes on slow macOS runners: it reads the phase order (seats, chair, done) from every status write instead of a 50 ms file poll that could miss the short chair phase.
+
 ## 0.4.2 (2026-11-22)
 
 ### Changed

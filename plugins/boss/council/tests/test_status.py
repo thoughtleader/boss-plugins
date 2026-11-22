@@ -192,7 +192,9 @@ class RunStatusTests(Base):
                 time.sleep(0.05)
         pt = threading.Thread(target=watch_pointer, daemon=True)
         pt.start()
-        code = self.run_council(self.cfg2(seats))
+        rec = Recorder()                                    # every write, for the phase order (a 50 ms poller can miss a short chair phase)
+        with mock.patch.object(status, "write_atomic", rec):
+            code = self.run_council(self.cfg2(seats))
         stop.set()
         th.join(2)
         pt.join(2)
@@ -214,11 +216,12 @@ class RunStatusTests(Base):
         self.assertGreater(max(a_bytes), min(a_bytes))
         self.assertTrue(any(x["last_byte_age_s"] is not None for s in streaming for x in s["seats"]))
         self.assertTrue(any(x["first_byte_s"] is not None for s in streaming for x in s["seats"]))
-        phases = []
-        for s in snaps:
+        phases = []                                         # from the recorder, not the poller: the echo chair lasts milliseconds
+        for s in rec.snaps:
             if not phases or phases[-1] != s["phase"]:
                 phases.append(s["phase"])
         self.assertEqual(phases, ["seats", "chair", "done"])
+        self.assertEqual(rec.snaps[-1], last)               # the poller's final file is the recorder's final write
         # the pointer named this run, with the runner's pid, while it ran; it is gone now
         self.assertEqual((ptr[0]["out_dir"], ptr[0]["pid"]), (self.out, os.getpid()))
         self.assertIsNone(status.current(self.state))
