@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Progress view for /boss:status (PROTOCOL.md dispatch loop, progress view step). Read-only.
+// Progress view for /boss:status (skills/start/PROGRESS-VIEW.md, loaded from PROTOCOL.md "Progress view"). Read-only.
 // usage: node "${CLAUDE_PLUGIN_ROOT}/skills/status/progress.js" <run folder name or path> [--details]
 // Sources: lib/manifest.js `status --run <run> --json` (rows, lease, tokens), <run>/PLAN.md's plan table (subtask, wave,
 // model/effort, agent type, in plan order), <run>/manifest.jsonl (launch/start events: subtask, role and last-activity

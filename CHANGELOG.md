@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 (2026-11-22)
+
+### Changed
+- `/boss:start` and `/boss:resume` load about 5 KB less: the Progress view, Escalation and Lease/rollover sections of `skills/start/PROTOCOL.md` moved verbatim into `PROGRESS-VIEW.md`, `ESCALATION.md` and `LEASE-ROLLOVER.md`, which the protocol reads only when it needs them (a progress report, a failed or retried row, a rollover or run end).
+
 ## 0.4.1 (2026-11-22)
 
 ### Fixed

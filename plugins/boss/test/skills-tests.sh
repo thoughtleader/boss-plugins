@@ -160,5 +160,25 @@ ok "memclean on a non-Linux uname exits 2" "$rc" "2"
 ok "memclean on a non-Linux uname says Linux and WSL only" "$(grep -c 'Linux and WSL only' "$T/mc3.err")" "1"
 ok "memclean on a non-Linux uname creates no state" "$([ -e "$MC3/memclean" ] && echo made || echo none)" "none"
 
+echo "== 7. PROTOCOL.md keeps a read-on-demand pointer for each section moved to its own file; the text lives in the new file"
+PR="$CL/skills/start/PROTOCOL.md"
+for pair in "Escalation by cause:ESCALATION.md" "Lease, resume and rollover:LEASE-ROLLOVER.md" "Progress view:PROGRESS-VIEW.md"; do
+  h="${pair%%:*}"; f="${pair##*:}"
+  ok "PROTOCOL.md has the '## $h' heading" "$(grep -cxF "## $h" "$PR")" "1"
+  ok "'## $h' pointer names skills/start/$f" "$(awk -v h="## $h" '$0==h {f=1; next} f && /^## / {exit} f' "$PR" | grep -cF "\$BOSS_LIB/../skills/start/$f")" "1"
+  ok "'## $h' pointer does not use the unexpanded CLAUDE_PLUGIN_ROOT form" "$(awk -v h="## $h" '$0==h {f=1; next} f && /^## / {exit} f' "$PR" | grep -c 'CLAUDE_PLUGIN_ROOT')" "0"
+  ok "skills/start/$f exists" "$([ -s "$CL/skills/start/$f" ] && echo y)" "y"
+done
+for pair in 'ESCALATION.md|wfp.js" escalate <role>' 'ESCALATION.md|--cause review-findings' 'ESCALATION.md|--cause failed' 'ESCALATION.md|--cause tooling' 'ESCALATION.md|owner-tune' \
+  'LEASE-ROLLOVER.md|lease acquire --run' 'LEASE-ROLLOVER.md|lease release --sid' 'LEASE-ROLLOVER.md|manifest.js" reconcile --run' 'LEASE-ROLLOVER.md|<run>/HANDOFF.md' 'LEASE-ROLLOVER.md|A rollover is never a reason' \
+  'PROGRESS-VIEW.md|progress.js" <run>' 'PROGRESS-VIEW.md|reproduce its output verbatim' 'PROGRESS-VIEW.md|Never invent an activity'; do
+  ok "${pair%%|*} holds: ${pair#*|}" "$(grep -cF -- "${pair#*|}" "$CL/skills/start/${pair%%|*}" | sed 's/^[1-9][0-9]*$/found/')" "found"
+done
+for t in 'wfp.js" escalate <role>' 'Findings on a sound approach' 'lease acquire --run <run> --sid' 'reproduce its output verbatim' 'Keep the formatter'; do
+  ok "PROTOCOL.md no longer carries moved text: $t" "$(grep -cF -- "$t" "$PR")" "0"
+done
+ok "lease pointer triggers on the run ending" "$(awk '$0=="## Lease, resume and rollover" {f=1; next} f && /^## / {exit} f' "$PR" | grep -c 'when the run ends')" "1"
+ok "PROTOCOL.md still carries Review sizing" "$(grep -cxF '### Review sizing (configurable default)' "$PR")" "1"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" = 0 ]

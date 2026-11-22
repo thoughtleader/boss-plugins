@@ -125,13 +125,7 @@ Make model and effort visible: start every Agent description with `[model/effort
 
 ## Escalation by cause
 
-The ladder is medium, then high, then xhigh, one step per row. Get the next step from `node "$BOSS_LIB/../wfp/wfp.js" escalate <role> [<model>/<effort>]`, passing the row's role and the step that ran, for example `escalate implementation sonnet/high`.
-
-- **Findings on a sound approach** (a review found fixable problems, the direction is right): continue the same builder with `manifest.js launch … --continue <id> --cause review-findings`, then SendMessage. Same model and effort.
-- **Failed, weak or wrong-approach output** (it missed its done-when, was shallow, needed heavy patching, or took the wrong approach): a fresh agent one step up, launched with `--cause failed`. A continuation keeps its model and effort and carries the failed attempt's assumptions, so it is the wrong tool here.
-- **A user taste round** (the user asks to change output that met its done-when): `--continue <id> --tune` records `owner-tune` and keeps the predecessor's first-pass. **A tooling fault** (a tool, hook or harness failed, not the worker): relaunch with `--cause tooling`.
-- The retry's launch sets the failed attempt's first-pass to n with its cause, and the retry's ledger line gets `escalated` from its step-up, so neither needs a hand-made record; `ledger.js close --attempt <id> --first-pass n --outcome retry --cause <same>` adds the outcome. A failure at the stepped-up level is blocked and goes to the user.
-- Never re-run a repeated failure without new evidence: rescope or use a stronger model.
+When a row fails, comes back weak or wrong, needs a review-findings follow-up, a user taste round or a tooling relaunch, or before any retry or step-up, read `$BOSS_LIB/../skills/start/ESCALATION.md` first (the cause table and the escalation ladder). Do not retry a repeated failure without it.
 
 ### Review sizing (configurable default)
 
@@ -139,29 +133,11 @@ One independent review at the end of a run, at the preset's review bar. A run of
 
 ## Lease, resume and rollover
 
-Each run has its own lease at `<data>/leases/<run>.json`, so two sessions never drive one run at once.
-
-- `node "$BOSS_LIB/manifest.js" lease acquire --run <run> --sid=$WFP_SID` when a run starts or resumes (`launch` also takes it when nobody holds it).
-- `lease renew --sid=$WFP_SID` (launches and prompts also renew it), `lease check --run <run> --sid=$WFP_SID`, `lease release`.
-- Lease commands take the run folder name, never a path.
-- If another live session holds the run, `acquire` and `launch` refuse (exit 3). Ask the user before `--force`.
-
-When context runs long and nothing is running (`/boss:stop` does these steps):
-
-1. Run `node "$BOSS_LIB/manifest.js" reconcile --run <run> --sid=$WFP_SID`. Every attempt that is not `done` with `next: advance` goes in HANDOFF's running table. A `next: gate` row goes there with its status (for example `gaps_found`) in Notes, and its dependents stay blocked.
-2. Write `<run>/HANDOFF.md` from the handoff template (5 KB or less).
-3. Run `node "$BOSS_LIB/manifest.js" lease release --sid=$WFP_SID`; it frees every lease this session holds.
-4. Tell the user to clear the chat and run `/boss:resume <run name>` (HANDOFF's `run:`, never a path). The command loads HANDOFF.md, the plan's Status table and any work-state list, re-acquires the lease, reconciles running rows and continues. Without a name it lists resumable runs and asks; it never picks one itself (`/boss:runs` shows the same list).
-
-When the run ends: `node "$BOSS_LIB/manifest.js" lease release --run <run> --sid=$WFP_SID`.
-
-A rollover is never a reason to stop on its own. Mention it only as one extra option inside a question already being asked at a real decision point.
+Before rolling over (context runs long, `/boss:stop`), when the run ends (the lease release), or when a lease command refuses (exit 3), read `$BOSS_LIB/../skills/start/LEASE-ROLLOVER.md`. `/boss:start` and `/boss:resume` take the lease themselves, so acquiring it needs no read.
 
 ## Progress view
 
-Whenever the active task or its activity changes, including row completion and wave launch, run `node "$BOSS_LIB/../skills/status/progress.js" <run>` and reproduce its output verbatim. The shared formatter prints a compact meter: matching W/T badges, cumulative wave progress above current-wave task progress, and three visible ☑/➜/⮡ summaries for completed, current and upcoming tasks. The bars are always first; do not prepend a completion paragraph. A run without waves has one T row. Preserve the normal DETAILS file link, which opens the full readable task report and lets a native chat plugin enhance it. Never print hidden payloads or HTML markers. Do not hand-space or reformat it as inline-code fragments or a Markdown table. Missing tokens stay unknown and reporting completeness belongs in Details; reported tokens are not billing figures. Do not add speaker/status headings, numeric fractions or percentages, token-unit labels, time-unit suffixes, column-divider glyphs, or usage asterisks. The meter uses equal-width tracks with full-size item ticks and blank unused positions, compact uppercase usage figures, and aligned clocks with dim leading zeros. W is hidden for a single wave. Approximate current-wave and job finish times show beside T/W (for example ~3:45PM); the next-reviewable-result forecast belongs in Details. Recorded owner waits are excluded from elapsed time. Both clocks use MM:SS until either reaches an hour, then both use HH:MM:SS. Live views update; posted chat reports keep their recorded values.
-
-Keep the formatter's ☑/➜/⮡ summaries and attention text. DONE shows work completed since the previous report; NOW shows every active task with short name and activity; NEXT includes recorded waiting reasons. Use the optional Short name, Activity, Estimate, Depends on, Reviewable and Instructions plan columns to supply those facts, and update Activity at each task change. Short name is brief plain language (at most 64 characters and 11 words); keep routes, code identifiers and full instructions in Details. Rows without a readable short name are omitted from the compact report, never clipped. Never invent an activity or a reviewable checkpoint. The completed row uses recorded successes only; empty completion groups are omitted. Add findings as concise bullets after the DETAILS link; the plugin places them inside expanded Details. Critical decisions and blockers remain explicit attention items. Do not add duplicate task strips, tables or next-up lists. `/boss:status <run>` shows this report; `--details` shows the task strip, table, results and next up; `--full` shows the per-row ledger table. Plan patches and decision points still show the relevant detail.
+Before printing any progress report (row completion, wave launch, a change of active task), read `$BOSS_LIB/../skills/start/PROGRESS-VIEW.md` and follow it; `node "$BOSS_LIB/../skills/status/progress.js" <run>` is the formatter it describes.
 
 ## Orchestrator guard
 
