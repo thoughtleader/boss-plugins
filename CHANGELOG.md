@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 (2026-11-22)
+
+### Fixed
+- CI passes on Ubuntu and macOS (Node 22.x and 24.x): portable test helpers for BSD tools and macOS temp paths, a Python 3.14 argparse test fix, and `/proc`-only tests skipped on macOS with a printed reason.
+- `doctor-tests.sh` defines `lacks()`, so six assertions that never ran now run.
+
+### Changed
+- README states that process-ownership reporting is Linux only, and that the meter board's macOS `ps` path has no CI coverage yet.
+- The macOS CI step that runs `test-all.sh` under `/bin/bash` 3.2 is named for what it checks.
+
 ## 0.4.0 (2026-11-21)
 
 ### Added

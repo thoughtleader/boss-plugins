@@ -1,6 +1,6 @@
 {
   "name": "boss",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Boss toolkit for Claude Code: plan-driven orchestrator (manifest/ledger engine, usage policy, orch-* agents, /boss:* skills and hooks), the chat meter, and council.",
   "author": {
     "name": "Michael Evan",

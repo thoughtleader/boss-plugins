@@ -59,7 +59,7 @@ jobs:
           /bin/bash scripts/secret-scan.sh .
 
       # The shell suites under /bin/bash 3.2 as well: the top-level script is 3.2; what they spawn by name still finds Homebrew's bash.
-      - name: Shell suites under /bin/bash 3.2 (macOS)
+      - name: test-all.sh under /bin/bash 3.2, suites under Homebrew bash (macOS)
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-all.sh export-tests skills-tests
 
