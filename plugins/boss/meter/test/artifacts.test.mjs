@@ -13,6 +13,8 @@ const mk = () => {
   const put = (f, body = 'x', mtime) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); if (mtime) fs.utimesSync(f, mtime / 1000, mtime / 1000); return f; };
   return { tmp, home, runs, projects, put, done: () => fs.rmSync(tmp, { recursive: true, force: true }) };
 };
+// extractPaths only reads /var, /tmp, /home ... paths; macOS temp dirs really live under /private/var, which names the same file
+const shown = (f) => f.replace(/^\/private(?=\/(?:var|tmp)\/)/, '');
 /** A subagent transcript whose last assistant message is `text`. */
 const transcript = (projects, session, task, text) => {
   const f = path.join(projects, '-proj', session, 'subagents', `agent-${task}.jsonl`); fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -43,7 +45,7 @@ test('collect: run folder, snapshot result and final-message paths merge by real
     m.put(path.join(runDir, 'ledger.jsonl')); m.put(path.join(runDir, 'manifest.jsonl')); m.put(path.join(runDir, 'progress.json')); m.put(path.join(runDir, '.hidden.png')); m.put(path.join(runDir, 'code.mts'));
     const shot = m.put(path.join(m.home, 'work', 'out.png'), 'x', 4000);
     const session = 'sess-aaaaaaaa', task = 'task-bbbbbbbb';
-    transcript(m.projects, session, task, `Done. Screenshot ${shot} and ${path.join(runDir, '4c-shot.png')}; missing /home/nobody/zzz.png`);
+    transcript(m.projects, session, task, `Done. Screenshot ${shown(shot)} and ${shown(path.join(runDir, '4c-shot.png'))}; missing /home/nobody/zzz.png`);
     const snap = { items: [{ id: 'row:4', kind: 'row', artifacts: [{ label: 'result', path: path.join(runDir, '4-controls.md') }] }, { id: 'row:4/a1', parent: 'row:4', kind: 'attempt', artifacts: [{ label: 'commit', path: null, sha: 'abc1234' }] }] };
     const out = collectArtifacts({ dirs: [runDir, runDir], snap, events: [{ attempt: 'r1#4c.1', row: '4c', session, task_id: task, output_file: '/tmp/gone/agent.output' }], roots: [fs.realpathSync(m.runs)], home: m.home, projectsDir: m.projects });
     assert.deepEqual(out.map((a) => a.name), ['4c-shot.png', 'out.png', '4-controls.md', 'DECISIONS.md'], 'newest first; machinery, dotfiles, code and missing files left out; each file once');
@@ -61,11 +63,11 @@ test('collect: output_file symlink is used when it resolves inside projects; a b
   try {
     const a = m.put(path.join(m.home, 'work', 'a.png')), b = m.put(path.join(m.home, 'work', 'b.png'));
     const session = 'sess-cccccccc';
-    const t1 = transcript(m.projects, session, 'task-1111aaaa', `see ${a}`);
+    const t1 = transcript(m.projects, session, 'task-1111aaaa', `see ${shown(a)}`);
     const link = path.join(m.tmp, 'tasks', 'x.output'); fs.mkdirSync(path.dirname(link), { recursive: true }); fs.symlinkSync(t1, link);
-    const outside = m.put(path.join(m.tmp, 'elsewhere.jsonl'), JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `leak ${b}` }] } }) + '\n');
+    const outside = m.put(path.join(m.tmp, 'elsewhere.jsonl'), JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `leak ${shown(b)}` }] } }) + '\n');
     const link2 = path.join(m.tmp, 'tasks', 'y.output'); fs.symlinkSync(outside, link2);
-    transcript(m.projects, session, 'task-2222bbbb', `fallback ${b}`);
+    transcript(m.projects, session, 'task-2222bbbb', `fallback ${shown(b)}`);
     const ev = (task, f) => ({ attempt: 'r#1.1', row: '1', session, task_id: task, output_file: f });
     const run = (events) => collectArtifacts({ events, roots: [], home: m.home, projectsDir: m.projects }).map((x) => x.name).sort();
     assert.deepEqual(run([ev('task-1111aaaa', link)]), ['a.png']);

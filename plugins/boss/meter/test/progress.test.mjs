@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as P from '../../lib/progress.mjs';
+const NO_PROC = fs.existsSync('/proc/self/stat') ? false : 'no /proc here (macOS): this reads /proc, which is Linux only (council README, Platform)';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const METER = path.dirname(HERE);
@@ -79,12 +80,12 @@ test('liveness: shared cases (same file as python)', () => {
   }
 });
 
-test('liveness: real probe on this process', () => {
+test('liveness: real probe on this process', { skip: NO_PROC }, () => {
   const s = { ...CASES.base, writer: P.writerIdentity(), heartbeat_at: P.iso(), updated_at: P.iso() };
   assert.equal(P.liveness(s).status, 'running');
 });
 
-test('session adapter: by id / pid, skips .key, rejects dead + reused', () => {
+test('session adapter: by id / pid, skips .key, rejects dead + reused', { skip: NO_PROC }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sess-'));
   const me = process.pid;
   const btime = Number(fs.readFileSync('/proc/stat', 'utf8').match(/^btime (\d+)$/m)[1]);

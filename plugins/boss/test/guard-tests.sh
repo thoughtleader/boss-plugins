@@ -3,6 +3,7 @@
 # Runs the checkout's guard with its warning slots and data dir in scratch (BOSS_DATA, ORCH_GUARD_STATE). Re-runnable; cleans up.
 # Usage: bash plugins/boss/test/guard-tests.sh     (exit 0 = all pass)
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 CL="${ORCH_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"; echo "code under test: $CL"   # the checkout this suite tests (a worktree runs its own code)
 export ORCH_GUARD_AFTER=1   # sections 1-7 test the exemption rules: the first non-exempt call reminds (section 8 tests the real threshold)
 unset ORCH_DIR ORCH_RUNS_DIR ORCH_PROJECTS_DIR CLAUDE_CONFIG_DIR BOSS_DATA BOSS_PROGRESS_DIR   # section 7 sets ORCH_DIR per call
@@ -13,7 +14,7 @@ trap 'rm -rf "$GT"' EXIT
 GUARD="$CL/hooks/orchestrator-guard.js"
 export BOSS_DATA="$GT/data"                                  # the default data dir under test (what the guard sees with no ORCH_DIR)
 export ORCH_GUARD_STATE="$GT/state/orchestrator-guard"       # warning slots stay in scratch, never in the checkout
-ssid(){ echo "guardtest-$(cat /proc/sys/kernel/random/uuid)"; }
+ssid(){ echo "guardtest-$(cat /proc/sys/kernel/random/uuid 2>/dev/null || node -e 'process.stdout.write(require("crypto").randomUUID())')"; }   # no /proc off Linux
 # t <sid> <tool> <json tool_input> [agent_id]
 t(){ jq -cn --arg s "$1" --arg t "$2" --argjson i "$3" --arg a "${4:-}" '{session_id:$s, hook_event_name:"PreToolUse", tool_name:$t, tool_input:$i} + (if $a == "" then {} else {agent_id:$a} end)' | node "$GUARD"; }
 b(){ t "$1" Bash "$(jq -cn --arg c "$2" '{command:$c}')"; }       # b <sid> <command>

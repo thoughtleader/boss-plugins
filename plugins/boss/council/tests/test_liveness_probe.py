@@ -26,6 +26,7 @@ if ROOT not in sys.path:
 from councillib import providers  # noqa: E402
 from councillib.otlp_sink import Sink  # noqa: E402
 from councillib.supervise import Launch  # noqa: E402
+from tests import needs_proc  # noqa: E402
 
 TOOL = os.path.join(ROOT, "tools", "liveness-probe.py")
 STUB = os.path.join(ROOT, "tests", "stub_cli.py")
@@ -530,6 +531,7 @@ class ProcessTests(Base):
         self.assertEqual(r["survivors"], [])
         self.assert_clean()
 
+    @needs_proc
     def test_concurrent_runs_see_each_other_and_end_independently(self):
         a = self.spawn("ca", ["hung"], "--end-at", "4", "--horizon", "30")
         b = self.spawn("cb", ["slow-stream", "2"], "--concurrent-with", "ca", "--horizon", "30")

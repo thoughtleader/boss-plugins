@@ -4,6 +4,7 @@
 # WFP_SRC=<plugin root> tests a candidate plugin tree (wfp/wfp.js, wfp/config.default.json, lib/paths.js) instead of this one. Exit code = 0 only when all pass.
 # wfp.js runs in place and writes only under the scratch data dir $T (BOSS_DATA): state in $T/state (WFP_STATE_DIR), errors.log, and the user overlay $T/wfp.json.
 SRC="${WFP_SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/test/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 unset ORCH_DIR ORCH_RUNS_DIR CLAUDE_ENV_FILE WFP_SID WFP_STATE_DIR CLAUDE_CONFIG_DIR BOSS_DATA
 CFG="$SRC/wfp/config.default.json"
 # Preset values are pinned for the legacy bar-logic cases. Section 21 at the end reads the shipped quality preset and asserts its bars and escalate steps (opus/medium planning, plan-check, review, default; diagnosis sonnet/medium; implementation sonnet/high; discovery haiku/medium), so tuning the shipped defaults fails loudly.

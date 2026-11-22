@@ -4,6 +4,7 @@
 # run attribution of main-chat calls, subagent -> attempt (task_id / toolUseId / description), weights, wfp snapshots.
 # Scratch ORCH_* dirs only. Usage: bash ~/.claude/orchestrator/test/tx-tests.sh   (exit 0 = all pass)
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 CL="${ORCH_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"; echo "code under test: $CL"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "PASS $1"; else fail=$((fail+1)); echo "FAIL $1 (got: $2 | want: $3)"; fi; }
@@ -134,7 +135,7 @@ o=$(node "$L" sync 2>&1)
 ok "append: only the new bytes read; msg_A raised to 90 (a message straddling two reads); msg_C added; counters continue" "$(q "SELECT (SELECT output_tokens FROM tx_calls WHERE message_id='msg_A')||' '||(SELECT COUNT(*) FROM tx_calls WHERE message_id='msg_C')||' '||(SELECT human_turns FROM tx_files WHERE path='$MAIN')")|$(echo "$o" | grep -c '(1 read ')" "90 1 3|1"
 ok "torn tail not consumed: offset stops at the last newline, before the torn line" "$(q "SELECT offset FROM tx_files WHERE path='$MAIN'")|$(q "SELECT COUNT(*) FROM tx_calls WHERE message_id='msg_D'")" "$(( $(stat -c %s "$MAIN") - 60 ))|0"
 # finish the torn line
-head -c -60 "$MAIN" > "$MAIN.tmp" && cat "$MAIN.tmp" > "$MAIN"; rm "$MAIN.tmp"; a 2026-10-01T00:30:09.000Z msg_D 8 claude-sonnet-5-5 >> "$MAIN"
+head -c $(( $(stat -c %s "$MAIN") - 60 )) "$MAIN" > "$MAIN.tmp" && cat "$MAIN.tmp" > "$MAIN"; rm "$MAIN.tmp"; a 2026-10-01T00:30:09.000Z msg_D 8 claude-sonnet-5-5 >> "$MAIN"
 node "$L" sync >/dev/null 2>&1
 ok "completed line is picked up from the stored offset" "$(q "SELECT COUNT(*) FROM tx_calls WHERE message_id='msg_D'")|$(q "SELECT offset=size FROM tx_files WHERE path='$MAIN'")" "1|1"
 ok "no double count after the resumes: S1 main calls = A,B,C,D" "$(q "SELECT group_concat(message_id) FROM (SELECT message_id FROM tx_calls WHERE session_id='S1' AND is_sidechain=0 ORDER BY message_id)")" "msg_A,msg_B,msg_C,msg_D"

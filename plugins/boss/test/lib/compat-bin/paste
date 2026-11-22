@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# paste for the suites: BSD paste (macOS) wants a file operand, GNU paste reads stdin when it has none (`paste -sd' '`).
+. "$(dirname "$0")/_shim.sh"
+real=$(shim_find paste) || { echo "paste: no real paste on PATH" >&2; exit 127; }
+last=""; prev=""; for a in "$@"; do prev="$last"; last="$a"; done
+case "$last" in -*) [ "$last" = - ] || exec "$real" "$@" -;; esac
+[ "$prev" = -d ] && exec "$real" "$@" -
+exec "$real" "$@"

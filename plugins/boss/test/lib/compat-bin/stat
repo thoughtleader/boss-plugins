@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# stat for the suites: GNU -c FORMAT on a host whose stat has -f instead (macOS).
+. "$(dirname "$0")/_shim.sh"
+real=$(shim_find stat) || { echo "stat: no real stat on PATH" >&2; exit 127; }
+if [ -z "${BOSS_COMPAT_FORCE_JS:-}" ] && "$real" -c%s / >/dev/null 2>&1; then exec "$real" "$@"; fi
+for a in "$@"; do case "$a" in -c*|--format*) shim_js stat "$@";; esac; done
+exec "$real" "$@"

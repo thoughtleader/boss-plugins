@@ -6,6 +6,7 @@
 # status (per-row view, run list, --json, usage, read-only), runs (live leases, resumable lines byte-identical, finished, other, read-only).
 # Scratch ORCH_DIR / ORCH_RUNS_DIR / ORCH_PROJECTS_DIR; never the live ACTIVE. Usage: bash ~/.claude/orchestrator/test/manifest-tests.sh   (exit 0 = all pass)
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 CL="${ORCH_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"; echo "code under test: $CL"   # the checkout this suite tests (a worktree runs its own code)
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "PASS $1"; else fail=$((fail+1)); echo "FAIL $1 (got: $2 | want: $3)"; fi; }
@@ -652,7 +653,7 @@ S16=lgfix-sid-holder-0016; S35=lgfix-sid-other-0035
 inm(){ date -u -d "$1 min" +%Y-%m-%dT%H:%M:%S.000Z; }
 # legacy <run> <sid> <expires: minutes from now>: write the legacy file, keys in the live order, acquired 3 h ago, renewed 1 h ago
 legacy(){ mkdir -p "$LG/runs/$1"; printf '{"v":1,"run":"%s","path":"%s","session":"%s","acquired":"%s","renewed":"%s","expires":"%s","ttl_sec":7200}\n' "$1" "$LG/runs/$1" "$2" "$(ago 180)" "$(ago 60)" "$(inm "$3")" > "$GA"; }
-gtree(){ (cd "$LG" && find . -printf '%p %T@ %s %m\n' | sort) | md5sum; }
+gtree(){ (cd "$LG" && find . -exec stat -c '%n %.9Y %s %a' {} + | sort) | md5sum; }
 LIVEK=$(jq -c keys_unsorted "$LIVE/ACTIVE.lease" 2>/dev/null || echo "$LIVEKEYS")
 legacy lgfix-run-a $S16 100; mkdir -p "$LG/runs/lgfix-run-b"; asum=$(md5sum < "$GA")
 for r in lgfix-run-a lgfix-run-b; do GZ event --run $r --type start --json '{"tool_use_id":"lg-s1"}' >/dev/null; done
@@ -1269,7 +1270,7 @@ lfix "$LD/d11/ACTIVE.lease" $RA $SA; lfix "$LD/d11/leases/$RB.json" $RB $SB; chm
 lfix "$LD/d12/leases/lsfix-run-a.json" lsfix-run-a $SA 30; lfix "$LD/d12/leases/lsfix-run-b.json" lsfix-run-b $SA 5; lfix "$LD/d12/leases/lsfix-run-c.json" lsfix-run-c $SB 1
 lfix "$LD/d12/ACTIVE.lease" lsfix-run-d $SA 60; lfix "$LD/d12/leases/lsfix-run-f.json" lsfix-run-f $SA 200 -5
 lfix "$LD/d12/leases/lsfix-run-e.json" lsfix-run-e $SA; jq -c '.renewed="garbage"' "$LD/d12/leases/lsfix-run-e.json" > "$LD/x.tmp" && mv "$LD/x.tmp" "$LD/d12/leases/lsfix-run-e.json"
-lsnap(){ find "$LD" -printf '%p %T@ %s %m\n' 2>/dev/null | sort; }
+lsnap(){ find "$LD" -exec stat -c '%n %.9Y %s %a' {} + 2>/dev/null | sort; }
 LTREE0=$(lsnap)
 
 ok "require() of lease-store.js prints nothing (scratch env and unset env)" "$(node -e "require('$LS')" 2>&1)$(env -u ORCH_DIR -u ORCH_RUNS_DIR node -e "require('$LS')" 2>&1)" ""

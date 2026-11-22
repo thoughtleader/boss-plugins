@@ -6,10 +6,12 @@
 # Runs on a scratch ORCH_DIR / ORCH_RUNS_DIR / ORCH_PROJECTS_DIR / ORCH_SETTINGS / ORCH_CLAUDE_ROOT / ORCH_PLUGIN_ROOT; never the live dirs.
 # Usage: bash test/doctor-tests.sh   (exit 0 = all pass)
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 CL="${ORCH_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"; echo "code under test: $CL"   # the checkout this suite tests
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "PASS $1"; else fail=$((fail+1)); echo "FAIL $1 (got: $2 | want: $3)"; fi; }
 has(){ if printf '%s\n' "$2" | grep -qF -- "$3"; then pass=$((pass+1)); echo "PASS $1"; else fail=$((fail+1)); echo "FAIL $1 (missing: $3)"; fi; }
+lacks(){ if printf '%s\n' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL $1 (unexpected: $3)"; else pass=$((pass+1)); echo "PASS $1"; fi; }
 M="$CL/lib/manifest.js"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 export ORCH_WFP_STATE="$T/wfp" ORCH_DIR="$T/orch" ORCH_RUNS_DIR="$T/orch/runs" ORCH_PROJECTS_DIR="$T/projects" ORCH_SETTINGS="$T/settings.json" ORCH_CLAUDE_ROOT="$T/root" ORCH_PLUGIN_ROOT="$T/plugin" ORCH_METRICS_DB="$T/metrics.db"
@@ -18,7 +20,7 @@ unset WFP_SID BOSS_ANALYTICS_LIB BOSS_DATA CLAUDE_CONFIG_DIR BOSS_PROGRESS_DIR; 
 LIVE=$(env -u ORCH_DIR -u ORCH_RUNS_DIR -u BOSS_DATA node "$CL/lib/paths.js" --json | jq -r .dataDir)
 LIVE_ERR_WAS=$([ -f "$LIVE/errors.log" ] && grep -cF -- "$T" "$LIVE/errors.log" || echo 0)
 rc(){ "$@" >/dev/null 2>&1; echo $?; }
-treesum(){ (cd "$1" && { find . -printf '%p %y %s %T@\n' | sort; find . -type f -exec md5sum {} + | sort; }) | md5sum | cut -c1-32; }
+treesum(){ (cd "$1" && { find . -exec stat -c '%n %F %s %.9Y' {} + | sort; find . -type f -exec md5sum {} + | sort; }) | md5sum | cut -c1-32; }
 iso(){ date -u -d "$1" +%Y-%m-%dT%H:%M:%S.000Z; }
 ME=zzdoc-me-sid-0001 OTHER=zzdoc-other-sid-02
 lease(){ printf '{"v":1,"run":"%s","path":"x","session":"%s","acquired":"%s","renewed":"%s","expires":"%s","ttl_sec":7200}\n' "$2" "$3" "$(iso '-3 hours')" "$(iso '-1 hour')" "$4" > "$ORCH_DIR/leases/$1"; }

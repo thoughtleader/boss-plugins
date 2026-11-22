@@ -99,6 +99,8 @@ def main(argv=None):
     result = runner.run(suite)
     sys.stderr.write("run_suite: %d tests in %.1f s of %g s allowed\n" % (result.testsRun, time.monotonic() - t0,
                                                                          args.timeout))
+    for t, reason in result.skipped:    # a skip is never silent: test-all prints these lines
+        sys.stderr.write("SKIP %s: %s\n" % (t.id(), reason))
     if args.durations:
         for key, secs in sorted(result.spent.items(), key=lambda kv: -kv[1])[:12]:
             sys.stderr.write("  %7.1f s  %s%s\n" % (secs, key, "  [slow]" if is_slow_name(key) else ""))

@@ -2,6 +2,7 @@
 # Row 4 tests (orchestrator v2): wfp fixtures, ledger round trip, orchestrator-guard exemption. Re-runnable; cleans up.
 # Usage: bash test/presets-tests.sh     (exit 0 = all pass)
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 CL="${ORCH_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"; echo "code under test: $CL"   # the checkout this suite tests (a worktree runs its own code)
 unset ORCH_DIR ORCH_RUNS_DIR BOSS_PROGRESS_DIR   # the guard and ledger defaults are under test; the ledger round trip below uses the real runs dir RD and deletes it
 pass=0; fail=0

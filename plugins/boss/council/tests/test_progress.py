@@ -9,6 +9,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import progress as P  # noqa: E402
+from tests import needs_proc  # noqa: E402
 
 PLUGIN = os.path.dirname(os.path.dirname(HERE))          # plugins/boss
 SCHEMA = json.load(open(os.path.join(PLUGIN, "lib", "progress.schema.json")))
@@ -115,6 +116,7 @@ class TestWriter(Base):
         self.assertEqual([os.path.basename(r) for r in removed], ["r1"])
         self.assertEqual([os.path.basename(r) for r in P.list_runs()], ["r2"])
 
+    @needs_proc
     def test_writer_identity_matches_proc(self):
         w = P.writer_identity()
         self.assertEqual(w["pid"], os.getpid())
@@ -162,6 +164,7 @@ class TestLiveness(unittest.TestCase):
             for k, v in c["expect"].items():
                 self.assertEqual(got[k], v, "%s: %s" % (c["name"], got))
 
+    @needs_proc
     def test_real_probe_on_self(self):
         snap = dict(CASES["base"], writer=P.writer_identity(), heartbeat_at=P.iso(), updated_at=P.iso())
         self.assertEqual(P.liveness(snap)["status"], "running")
@@ -188,12 +191,15 @@ class TestSessionAdapter(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    @needs_proc
     def test_lookup_by_session_id_skips_key(self):
         self.assertEqual(P.session_state({"session_id": "sid-me"}, self.d), {"pid": os.getpid(), "status": "busy"})
 
+    @needs_proc
     def test_lookup_by_pid(self):
         self.assertEqual(P.session_state({"pid": os.getpid()}, self.d)["status"], "busy")
 
+    @needs_proc
     def test_dead_and_reused(self):
         self.assertIsNone(P.session_state({"session_id": "sid-dead"}, self.d))
         self.assertIsNone(P.session_state({"session_id": "sid-old"}, self.d))

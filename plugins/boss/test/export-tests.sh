@@ -226,7 +226,7 @@ if [ -d /proc/self ]; then
   ssrun --leftover "$T/lo-idle" >/dev/null 2>&1; ok "secret-scan --leftover: none exits 0" "$?" "0"
   kill "$lopid" 2>/dev/null; wait "$lopid" 2>/dev/null
 else
-  echo "SKIP no /proc"
+  echo "SKIP no /proc here (macOS): the Linux leftover scan of /proc/<pid>/cwd cannot run; the fail-closed check below covers this host"
 fi
 # off Linux there is no /proc/<pid>/cwd to scan: the check must fail closed (2), never report "nothing found" (0). A uname stub first on PATH stands in for macOS.
 UND="$T/uname-darwin"; mkdir -p "$UND"; printf '#!/bin/sh\necho Darwin\n' > "$UND/uname"; chmod +x "$UND/uname"

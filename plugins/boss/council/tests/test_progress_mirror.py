@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -24,6 +25,7 @@ import council  # noqa: E402
 from councillib import council_run, preflight, progress_mirror as pm, status  # noqa: E402
 from tests.test_council_run import Base, seat  # noqa: E402
 from tests.test_or_fallback import FastFailBase, fseat  # noqa: E402
+from tests import needs_proc  # noqa: E402
 
 P = pm.lib()
 SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -179,6 +181,7 @@ class ConvertTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BOSS_PROGRESS_DIR": os.path.join(tmp, "boss")}):
             m = self.mirror(out)
             d1 = m.publish(self.snap(seats=[self.seatd("a", "streaming", status_=None)]))
+            time.sleep(0.01)   # the stamp has millisecond resolution: two publishes in one ms would compare equal on a fast host
             d2 = m.publish(self.snap(seats=[self.seatd("a", "streaming", status_=None, out_bytes=99)]))   # bytes only
             d3 = m.publish(self.snap(seats=[self.seatd("a")]))
             self.assertEqual(d1["seq"], d2["seq"])                     # no state change, no event
@@ -244,6 +247,7 @@ class ConvertTests(unittest.TestCase):
         self.assertLessEqual(len(doc["title"]), 200)
         self.assertRegex(doc["run_id"], r"^[A-Za-z0-9._-]{1,128}$")
 
+    @needs_proc
     def test_08_find_owner_walks_to_a_session_file_and_never_opens_a_key(self):
         tmp = tempfile.mkdtemp(prefix="council-sessions-")
         self.addCleanup(shutil.rmtree, tmp, True)

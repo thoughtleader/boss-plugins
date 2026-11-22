@@ -14,6 +14,7 @@ from unittest import mock
 import council
 import progress as P
 from councillib import config, preflight, progress_mirror, providers
+from tests import needs_proc  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROMPTS = os.path.join(ROOT, "prompts")
@@ -203,6 +204,7 @@ class SessionsDir(Base):
         with open(os.path.join(d, "%d.json" % pid), "w") as f:
             f.write('{"pid": %d, "sessionId": "%s", "status": "busy"}' % (pid, sid))
 
+    @needs_proc
     def test_find_owner_reads_the_claude_config_dir(self):
         ppid = os.getppid()
         self.put(self.tmp, ppid, "sess-cfg")
@@ -210,6 +212,7 @@ class SessionsDir(Base):
             o = progress_mirror.find_owner(P, env={})
         self.assertEqual((o["session_id"], o["pid"]), ("sess-cfg", ppid))
 
+    @needs_proc
     def test_find_owner_falls_back_to_home_dot_claude(self):
         ppid = os.getppid()
         home = os.path.join(self.tmp, "home")
@@ -219,6 +222,7 @@ class SessionsDir(Base):
             o = progress_mirror.find_owner(P, env={})
         self.assertEqual(o["session_id"], "sess-home")
 
+    @needs_proc
     def test_session_state_reads_the_claude_config_dir(self):
         self.put(self.tmp, os.getpid(), "sid-cfg")
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.tmp}):

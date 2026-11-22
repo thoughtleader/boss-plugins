@@ -3,6 +3,7 @@
 # that the committed hooks/meter-register.js equals a fresh build. node --test prints the "ℹ pass N / ℹ fail M" counts
 # scripts/test-all.sh reads. meter/mod/tests/native.test.ts runs only under `claude plugin test`; it is not run here.
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PLUGIN/meter" || exit 1
 # esbuild (devDependency in meter/package.json) is needed to rebuild the bundle for the staleness test

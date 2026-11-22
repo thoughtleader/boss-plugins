@@ -837,11 +837,12 @@ class PreflightRows(unittest.TestCase):
         q = "Read /home/example/repo/src/app.js and /tmp/other/file.txt please"
         plain = preflight.question_rows(q, [], False)
         self.assertEqual({c.result for c in plain}, {"FAIL"})
-        got = preflight.question_rows(q, [], False, root="/home/example/repo")
+        root = preflight._norm("/home/example/repo")    # as the caller passes it (realpath'd; macOS resolves /home through the automounter)
+        got = preflight.question_rows(q, [], False, root=root)
         self.assertEqual(sorted(c.result for c in got), ["FAIL", "WARN"])
         inside = [c for c in got if c.result == "WARN"][0]
         self.assertIn("inside the --grounded root", inside.detail)
-        only_in = preflight.question_rows("Read /home/example/repo/src/app.js", [], False, root="/home/example/repo")
+        only_in = preflight.question_rows("Read /home/example/repo/src/app.js", [], False, root=root)
         self.assertEqual([c.result for c in only_in], ["WARN"])
 
 

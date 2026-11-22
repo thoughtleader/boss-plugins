@@ -42,6 +42,25 @@ class FakeStdin:
         self.buffer = io.BytesIO(data)
 
 
+class FakeStdout:
+    """sys.stdout for the seat child: a binary .buffer, and no terminal. A bare Mock has a fileno() that returns a Mock, which
+    Python 3.14's argparse (it asks whether to colour its help) cannot turn into an integer."""
+    def __init__(self):
+        self.buffer = io.BytesIO()
+
+    def fileno(self):
+        raise io.UnsupportedOperation("fileno")
+
+    def isatty(self):
+        return False
+
+    def write(self, s):
+        return len(s)
+
+    def flush(self):
+        pass
+
+
 def run_child(argv, stdin=b"hello"):
     """-> (exit code, [recorded Requests], stderr text). urlopen and stdin are faked."""
     seen = []
@@ -53,7 +72,7 @@ def run_child(argv, stdin=b"hello"):
     err = io.StringIO()
     with mock.patch.object(openrouter_seat.urllib.request, "urlopen", fake_urlopen), \
             mock.patch.object(openrouter_seat.sys, "stdin", FakeStdin(stdin)), \
-            mock.patch.object(openrouter_seat.sys, "stdout", mock.Mock(buffer=io.BytesIO())), \
+            mock.patch.object(openrouter_seat.sys, "stdout", FakeStdout()), \
             mock.patch.object(openrouter_seat.sys, "stderr", err), \
             mock.patch.dict(os.environ, {"TEST_OR_KEY": "k-test"}):
         code = openrouter_seat.main(argv)

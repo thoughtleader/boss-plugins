@@ -22,6 +22,7 @@ if ROOT not in sys.path:
 import council  # noqa: E402
 from councillib import council_run, netwatch, preflight, reap  # noqa: E402
 from tests import test_council_run as T  # noqa: E402
+from tests import needs_proc  # noqa: E402
 
 PY = sys.executable or "/usr/bin/python3"
 STUB = os.path.join(ROOT, "tests", "stub_cli.py")
@@ -190,6 +191,7 @@ class SweepTests(SweepBase):
         self.assertEqual((ls["status"], ls["late"]), ("runner_lost", ["seats/x.original.late.md"]))
         self.assertFalse(os.path.exists(os.path.join(self.out, "chair", "synthesis.md")))
 
+    @needs_proc
     def test_o112_a_second_orphan_of_the_run_keeps_it_unsettled_until_it_is_swept(self):
         self.entry("7" * 32)
         child = subprocess.Popen([PY, "-Es", "-c", "import time; time.sleep(60)"], stdin=subprocess.DEVNULL,
@@ -241,6 +243,7 @@ class SweepTests(SweepBase):
         self.entry("f" * 32, runner_pid=os.getpid(), runner_start=start + 1)
         self.assertEqual(len(self.sweep()["swept"]), 1)
 
+    @needs_proc
     def test_o16_a_live_orphan_is_reported_with_age_seat_call_and_run_and_never_signalled(self):
         tag = "9" * 32
         child = subprocess.Popen([PY, "-Es", "-c", "import time; time.sleep(60)"], stdin=subprocess.DEVNULL,
@@ -270,6 +273,7 @@ class SweepTests(SweepBase):
         child.wait()
         self.assertEqual(len(self.sweep()["swept"]), 1, "once it has ended it is swept")
 
+    @needs_proc
     def test_o17_the_work_dir_stays_while_another_record_uses_it(self):
         a = self.entry("1" * 32, call="original")
         child = subprocess.Popen([PY, "-Es", "-c", "import time; time.sleep(60)"], stdin=subprocess.DEVNULL,
@@ -390,6 +394,7 @@ class ProcessTests(SweepBase):
     wait_runner_done = T.RunnerTests.wait_runner_done
     read_log = T.RunnerTests.read_log
 
+    @needs_proc
     def test_o30_kill9_runner_live_orphan_is_warned_not_killed_then_its_answer_is_appended_late(self):
         # a, b answer; x's original and hedge stay silent past the pending point, so the chair runs and the launcher
         # returns; then the runner is killed with SIGKILL while x is still running
@@ -442,6 +447,7 @@ class ProcessTests(SweepBase):
         self.assertEqual(preflight.sweep_orphans(self.cfg_)["swept"], [])
         self.assert_no_survivors()
 
+    @needs_proc
     def test_o31_term_to_the_launcher_is_not_forwarded_kill_term_runner_pid_stops_every_call(self):
         # D59 (row 47, supersedes D18): a TERM to the launcher (a closing chat or terminal) is not an operator stop;
         # the calls keep running. Only kill -TERM <runner_pid> (D53) stops them, each with its real end.
@@ -490,6 +496,7 @@ class ProcessTests(SweepBase):
         self.assertEqual(os.listdir(self.wdir()), [], "the killed reapers' end records are swept as garbage")
         self.assert_no_survivors()
 
+    @needs_proc
     def test_o32_kill_term_runner_pid_after_ready_stops_every_call_watch_calls_included(self):
         seats = [T.seat("a"), T.seat("b"), T.hseat("x", "hung", hedge_mode="hung")]
         cfg = self.hcfg(seats, ceiling=60, at=0.4)

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# md5sum for the suites: macOS has md5 only.
+. "$(dirname "$0")/_shim.sh"
+if [ -z "${BOSS_COMPAT_FORCE_JS:-}" ] && real=$(shim_find md5sum); then exec "$real" "$@"; fi
+shim_js md5sum "$@"

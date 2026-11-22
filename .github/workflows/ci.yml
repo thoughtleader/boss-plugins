@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,6 +39,8 @@ jobs:
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
 
       - name: Tests
+        env:
+          TEST_ALL_TAIL: 300   # a failing suite prints its failure lines and this many output lines, so the CI log alone says what broke
         run: bash scripts/test-all.sh
 
       - name: Secret scan
@@ -56,10 +59,8 @@ jobs:
           /bin/bash scripts/secret-scan.sh .
 
       # The shell suites under /bin/bash 3.2 as well: the top-level script is 3.2; what they spawn by name still finds Homebrew's bash.
-      # Not yet seen green on a macOS runner, so a failure here is reported but does not fail the job; make it a hard check once it is.
       - name: Shell suites under /bin/bash 3.2 (macOS)
         if: runner.os == 'macOS'
-        continue-on-error: true
         run: /bin/bash scripts/test-all.sh export-tests skills-tests
 
   # The council needs Python 3.11+ (tomllib). On 3.10 every entry script must say so and exit 2, not traceback.

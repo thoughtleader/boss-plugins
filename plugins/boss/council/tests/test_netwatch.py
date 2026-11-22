@@ -17,6 +17,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from councillib import netwatch  # noqa: E402
+from tests import needs_proc  # noqa: E402
 
 PY = sys.executable or "/usr/bin/python3"
 
@@ -201,6 +202,7 @@ class RealProc(unittest.TestCase):
             "    time.sleep(25)\n"
             "os._exit(0)\n")
 
+    @needs_proc
     def test_reparented_child_with_own_pgid_found_by_tag(self):
         tag = "t-" + uuid.uuid4().hex
         env = dict(os.environ, COUNCIL_SEAT_TAG=tag)

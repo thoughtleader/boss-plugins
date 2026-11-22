@@ -36,3 +36,9 @@ os.environ.update({
 os.environ.pop("BOSS_PROGRESS_LIB", None)
 os.environ["COUNCIL_CONFIG"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "config.test.toml")
 SCRATCH_ROOT = _root
+
+# Tests that read /proc (the per-seat environment scan, process start ticks, the parent walk). The council works without /proc on
+# macOS, but those readers degrade to "unknown" there (README, Platform), so these tests run on Linux only; run_suite prints each skip.
+import unittest  # noqa: E402
+NO_PROC = not os.path.isdir("/proc/self")
+needs_proc = unittest.skipIf(NO_PROC, "no /proc here (macOS): this reads /proc, which is Linux only (council README, Platform)")

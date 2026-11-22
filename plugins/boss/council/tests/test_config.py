@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from councillib import config, providers, timing
+from tests import needs_proc  # noqa: E402
 
 
 def seat(i, provider, model):
@@ -831,27 +832,31 @@ class NoCeilingCouncil(T.HedgeBase):
         return {ln["wd"]: ln["limits"] for ln in T.HedgeStub.launches if ln["wd"].startswith("x")}
 
     def test_n10_soft_notice_starts_the_hedge_original_ends_on_its_own_exit(self):
-        seats = [T.seat("a"), T.seat("b"), T.hseat("x", "busy-silent 2.5", hedge_mode="quick")]
-        code = self.run_council(self.ncfg(seats))
+        # the soft notice is at AT s; with no ceiling a hedge that has not answered AT s after it started leaves the seat "pending" (D39),
+        # so AT is generous (a loaded macOS runner starts the stub slowly) and the original outlives it by 2 s
+        AT = 1.5
+        seats = [T.seat("a"), T.seat("b"), T.hseat("x", "busy-silent %s" % (AT + 2), hedge_mode="quick")]
+        code = self.run_council(self.ncfg(seats, at=AT))
         self.assertEqual(code, 0)
         lims = self.x_limits()
         self.assertEqual(sorted(lims), ["x", "x_hedge"])
         for wd, lim in lims.items():
             self.assertIsNone(lim.ceiling_s, wd)
             self.assertIsNone(lim.deadline_s, wd)
-        self.assertEqual(lims["x"].soft_at_s, 0.5)
+        self.assertEqual(lims["x"].soft_at_s, AT)
         calls = self.calls()
         self.assertEqual(calls[0]["call"], "hedge")
-        self.assertGreaterEqual(calls[0]["after_s"], 0.45)
-        self.assertLess(calls[0]["after_s"], 1.5)
+        self.assertGreaterEqual(calls[0]["after_s"], AT - 0.05)
+        self.assertLess(calls[0]["after_s"], AT + 1.0)
         x = self.seat_json("x")
         self.assertEqual((x["status"], x["answered_by"]), ("ok", "hedge"))
         self.assertEqual(self.roles("x"), {"original": "late", "hedge": "used"})
         self.assertEqual((x["calls"][0]["status"], x["calls"][0]["exit_code"]), ("ok", 0))   # its own exit, not killed
-        self.assertGreaterEqual(self.wall, 2.4)
+        self.assertGreaterEqual(self.wall, AT + 1.9)
         self.assertIn("DONE", self.read("seats", "x.original.late.md"))
         self.assert_no_survivors()
 
+    @needs_proc
     def test_n11_d39_pending_with_no_ceiling_nothing_killed_both_answers_late(self):
         seats = [T.seat("a"), T.seat("b"), T.hseat("x", "busy-silent 2.2", hedge_mode="busy-silent 2.6")]
         code = self.run_council(self.ncfg(seats))
@@ -883,6 +888,7 @@ class NoCeilingCouncil(T.HedgeBase):
         self.assertEqual({c["call"]: c["status"] for c in x["calls"]}, {"original": "ok", "hedge": "ok"})
         self.assert_no_survivors()
 
+    @needs_proc
     def test_n13_orphan_sweep_leaves_a_live_no_ceiling_call_alone_then_appends_its_answer(self):
         from councillib import netwatch, preflight
         seats = [T.seat("a"), T.seat("b"), T.hseat("x", "busy-silent 2.2", hedge_mode="busy-silent 3.2")]

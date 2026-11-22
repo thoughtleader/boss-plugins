@@ -7,6 +7,7 @@
 # Runs on scratch ORCH_DIR / ORCH_RUNS_DIR / ORCH_METRICS_DB; never the live ACTIVE, ACTIVE.lease, run ledgers or metrics.db.
 # Usage: bash ~/.claude/orchestrator/test/metrics-tests.sh   (exit 0 = all pass)
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 CL="${ORCH_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"; echo "code under test: $CL"   # the checkout this suite tests (a worktree runs its own code)
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "PASS $1"; else fail=$((fail+1)); echo "FAIL $1 (got: $2 | want: $3)"; fi; }

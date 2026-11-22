@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs'), os = require('os'), path = require('path');
 const { spawnSync, spawn } = require('child_process');
+const NO_PROC = fs.existsSync('/proc/self/stat') ? false : 'no /proc here (macOS): this reads /proc, which is Linux only (council README, Platform)';
 
 const CL = process.env.ORCH_TEST_ROOT || path.resolve(__dirname, '..');
 const MAN = path.join(CL, 'lib', 'manifest.js');
@@ -306,7 +307,7 @@ test('terminal: a plan-less run ends done on release, failed when an attempt fai
   } finally { sb.done(); }
 });
 
-test('owner: the lease holder session maps to its pid through sessions/<pid>.json; a stale answer is not reused', () => {
+test('owner: the lease holder session maps to its pid through sessions/<pid>.json; a stale answer is not reused', { skip: NO_PROC }, () => {
   const sb = sandbox(); try {
     sb.runDir('ro');
     const sess = { pid: process.pid, sessionId: 'S-OWN', startedAt: Math.round(Date.now() - process.uptime() * 1000), status: 'busy', kind: 'interactive' };

@@ -30,7 +30,7 @@ unset WFP_SID ORCHESTRATOR_GUARD BOSS_DATA CLAUDE_CONFIG_DIR BOSS_PROGRESS_DIR
 mkdir -p "$ORCH_GUARD_STATE"
 GUARD="$CL/hooks/orchestrator-guard.js"
 NAMES="start approve away stop resume runs status cost doctor memclean"
-ssid(){ echo "$PFX$(cat /proc/sys/kernel/random/uuid 2>/dev/null || date +%s%N)"; }
+ssid(){ echo "$PFX$(cat /proc/sys/kernel/random/uuid 2>/dev/null || node -e 'process.stdout.write(require("crypto").randomUUID())')"; }
 gwarn(){ jq -cn --arg s "$(ssid)" --arg c "$1" '{session_id:$s, hook_event_name:"PreToolUse", tool_name:"Bash", tool_input:{command:$c}}' \
   | ORCH_GUARD_AFTER=1 node "$GUARD" | jq -r '.hookSpecificOutput.additionalContext // ""' | grep -c '^\[orchestrator\]'; }
 HELP_M=$(node "$CL/lib/manifest.js" help 2>&1); HELP_L=$(node "$CL/lib/ledger.js" help 2>&1)

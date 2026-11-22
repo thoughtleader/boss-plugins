@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+const NO_PROC = fs.existsSync('/proc/self/stat') ? false : 'no /proc here (macOS): this reads /proc, which is Linux only (council README, Platform)';
 import { buildBoard, loadSources, defaultPaths, plain, stripFor, glyph, SCHEMA } from '../board.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -258,7 +259,7 @@ test('ledger: tokens and first-pass per attempt; today per run and per session; 
   assert.equal(none.runs[0].waves[0].rows[0].tokens, null); assert.equal(none.runs[0].totals.tokens, null);
 });
 
-test('loader: reads a fixture tree read-only (dead pid skipped, .key untouched), builds a board', () => {
+test('loader: reads a fixture tree read-only (dead pid skipped, .key untouched), builds a board', { skip: NO_PROC }, () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'board-'));
   const P = { boss: path.join(tmp, 'boss'), sessions: path.join(tmp, 'sessions'), leases: path.join(tmp, 'orch', 'leases'), runs: path.join(tmp, 'orch', 'runs'), wfp: path.join(tmp, 'wfp'), inbox: path.join(tmp, 'boss', 'inbox') };
   for (const d of [P.sessions, P.leases, P.wfp, path.join(P.runs, 'r1'), path.join(P.boss, 'runs', 'orchestrator', 'r1'), path.join(P.inbox, String(process.pid))]) fs.mkdirSync(d, { recursive: true });

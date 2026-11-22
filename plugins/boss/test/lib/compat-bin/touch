@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# touch for the suites: GNU -d 'N min ago' on a host whose touch lacks it (macOS).
+. "$(dirname "$0")/_shim.sh"
+real=$(shim_find touch) || { echo "touch: no real touch on PATH" >&2; exit 127; }
+if [ -z "${BOSS_COMPAT_FORCE_JS:-}" ] && "$real" --version >/dev/null 2>&1; then exec "$real" "$@"; fi
+for a in "$@"; do [ "$a" = -d ] && shim_js touch "$@"; done
+exec "$real" "$@"

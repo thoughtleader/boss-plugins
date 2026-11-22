@@ -20,7 +20,7 @@ if ROOT not in sys.path:
 
 from councillib import council_run, openrouter_seat, preflight, providers  # noqa: E402
 from tests.test_council_run import Base, seat  # noqa: E402
-from tests.test_openrouter_seat import BASE, DONE, FakeResp, FakeStdin  # noqa: E402
+from tests.test_openrouter_seat import BASE, DONE, FakeResp, FakeStdin, FakeStdout  # noqa: E402
 
 KEY = "k-secret-do-not-leak"
 
@@ -45,7 +45,7 @@ def run_child(outcomes, argv=BASE):
     with mock.patch.object(openrouter_seat.urllib.request, "urlopen", fake_urlopen), \
             mock.patch.object(openrouter_seat.time, "sleep", sleeps.append), \
             mock.patch.object(openrouter_seat.sys, "stdin", FakeStdin(b"hello")), \
-            mock.patch.object(openrouter_seat.sys, "stdout", mock.Mock(buffer=io.BytesIO())), \
+            mock.patch.object(openrouter_seat.sys, "stdout", FakeStdout()), \
             mock.patch.object(openrouter_seat.sys, "stderr", errbuf), \
             mock.patch.dict(os.environ, {"TEST_OR_KEY": KEY}):
         code = openrouter_seat.main(argv)

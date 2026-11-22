@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# mktemp for the suites: on macOS the temp dir is /var/folders/.. (a symlink into /private) and TMPDIR ends in a slash, so the printed
+# path differs from the one git, node and the plugin print after resolving it. Print the canonical path instead. Elsewhere: the real mktemp.
+. "$(dirname "$0")/_shim.sh"
+real=$(shim_find mktemp) || { echo "mktemp: no real mktemp on PATH" >&2; exit 127; }
+if [ -z "${BOSS_COMPAT_FORCE_JS:-}" ] && [ "$(uname -s)" != Darwin ]; then exec "$real" "$@"; fi
+p=$("$real" "$@") || exit $?
+case "$*" in *-u*) printf '%s\n' "$p"; exit 0;; esac
+if [ -d "$p" ]; then printf '%s\n' "$(cd "$p" && pwd -P)"
+elif [ -e "$p" ]; then printf '%s/%s\n' "$(cd "$(dirname "$p")" && pwd -P)" "$(basename "$p")"
+else printf '%s\n' "$p"; fi

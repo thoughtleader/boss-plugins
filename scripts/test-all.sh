@@ -4,7 +4,7 @@
 #   scripts/test-all.sh                 run all suites, print one PASS/FAIL line each, exit 1 if any failed
 #   scripts/test-all.sh --list          print the suite paths (relative to plugins/boss), one per line, and exit 0
 #   scripts/test-all.sh <text>...       run only the suites whose path contains one of the given texts
-#   scripts/test-all.sh -v | --verbose  also print the FAIL lines of a failing suite (default: first 12)
+#   scripts/test-all.sh -v | --verbose  accepted, no effect (a failing suite always prints all its FAIL lines and the last 80 lines of its output)
 #
 # Suites: plugins/boss/test/*.sh, plugins/boss/test/*.test.js (run with `node --test`) and plugins/boss/wfp/fixtures/run.sh.
 # Each suite gets a fresh scratch HOME, ORCH_DIR and BOSS_DATA, so nothing touches the real config or data dir.
@@ -12,6 +12,7 @@
 # <scratch HOME>/.claude and <scratch HOME>/.claude/boss (still scratch), and the gate and hook suites assert those defaults. Session and test-override variables from the calling
 # shell are cleared first.
 # Env: TEST_ALL_TIMEOUT=<seconds per suite> (default 600; ignored when no timeout command exists).
+#      TEST_ALL_TAIL=<lines> how much of a failing suite's output to print after its failure lines (default 80).
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN="$ROOT/plugins/boss"
@@ -56,6 +57,9 @@ while IFS= read -r s; do
   [ -n "$s" ] || continue
   total=$((total+1))
   S=$(mktemp -d "${TMPDIR:-/tmp}/boss-test-all.XXXXXX")
+  # the canonical path: macOS TMPDIR is /var/folders/../T/ (a symlink into /private, and a trailing slash that mktemp doubles), and the
+  # suites compare paths they built with paths git, node and the plugin print after resolving them
+  S=$(cd "$S" && pwd -P)
   mkdir -p "$S/home/.claude" "$S/orch" "$S/data"
   # a neutral git identity in the scratch HOME's global config (like a CI runner would need); suites' own -c settings still win
   printf '[user]\n\tname = boss-test\n\temail = boss-test@example.invalid\n' > "$S/home/.gitconfig"
@@ -77,14 +81,21 @@ while IFS= read -r s; do
     [ -n "$p" ] && counts="$p pass, ${f:-0} fail"
   fi
   [ -n "$counts" ] || counts="no counts printed"
+  # skips are never silent: node prints "﹣ name # reason" (and "ℹ skipped N"), shell suites print "SKIP reason"
+  skips=$(grep -E '^[ ]*(﹣|SKIP )' "$S/out.log" | head -20)
+  if [ -n "$skips" ]; then nskip=$(printf '%s\n' "$skips" | grep -c .); counts="$counts, $nskip skipped"; fi
   if [ "$rc" = 0 ]; then
     printf 'PASS  %-34s %s (%ss)\n' "$s" "$counts" "$dt"
+    [ -n "$skips" ] && printf '%s\n' "$skips" | sed 's/^ */        /'
   else
     failed=$((failed+1)); FAILED+=("$s")
     why="exit $rc"; [ "$rc" = 124 ] && why="timeout"
     printf 'FAIL  %-34s %s, %s (%ss)\n' "$s" "$counts" "$why" "$dt"
-    if [ "$VERBOSE" = 1 ]; then n=1000; else n=12; fi
-    { grep -E '^FAIL |^not ok |^# Subtest.*fail' "$S/out.log" | head -"$n"; [ "$rc" = 124 ] && tail -3 "$S/out.log"; } | sed 's/^/        /'
+    # every failure line (a cap of 1000), then the last 80 lines of the suite's output, so a CI log alone says what broke
+    # (-v / --verbose is kept for compatibility; the full list is now the default)
+    nfail=$(grep -cE '^FAIL[: ]|^ERROR: |^not ok |^# Subtest.*fail|^ +not ok ' "$S/out.log")
+    { grep -E '^FAIL[: ]|^ERROR: |^not ok |^# Subtest.*fail|^ +not ok ' "$S/out.log" | head -1000
+      echo "--- last ${TEST_ALL_TAIL:-80} lines of $s ($nfail failure line(s) above) ---"; tail -n "${TEST_ALL_TAIL:-80}" "$S/out.log"; } | sed 's/^/        /'
   fi
   rm -rf "$S"
 done < <(selected)

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# date for the suites: GNU -d / --date and %N on a host whose date lacks them (macOS).
+. "$(dirname "$0")/_shim.sh"
+real=$(shim_find date) || { echo "date: no real date on PATH" >&2; exit 127; }
+if [ -z "${BOSS_COMPAT_FORCE_JS:-}" ] && [ "$("$real" -d @0 +%s 2>/dev/null)" = 0 ] && [ "$("$real" +%N 2>/dev/null)" != N ]; then exec "$real" "$@"; fi
+for a in "$@"; do case "$a" in -d|--date=*|*%N*) shim_js date "$@";; esac; done
+exec "$real" "$@"

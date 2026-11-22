@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# wc for the suites: BSD wc pads its counts with spaces ("       3"); GNU wc does not when it reads stdin.
+. "$(dirname "$0")/_shim.sh"
+real=$(shim_find wc) || { echo "wc: no real wc on PATH" >&2; exit 127; }
+out=$("$real" "$@"); rc=$?
+[ -n "$out" ] && printf '%s\n' "$out" | sed 's/^ *//'
+exit $rc
