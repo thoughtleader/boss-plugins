@@ -333,6 +333,27 @@ class CodexTests(Base):
         self.assertIsNone(ex.final_text())
         self.assertEqual(ex.partial_text(), "")
 
+    def test_18b_an_error_item_is_a_seat_note_not_the_answer_or_a_failure(self):
+        """Item 20: `item.completed` of type `error` is kept as a note (`detail` of an ok seat); the answer, the status
+        (`error()`) and the usage are what they were without it."""
+        stream = b"\n".join([
+            b'{"type":"thread.started","thread_id":"T"}',
+            b'{"type":"item.completed","item":{"id":"item_0","type":"error","message":"tool x was skipped"}}',
+            b'{"type":"item.completed","item":{"id":"item_1","type":"error","message":"tool x was skipped"}}',
+            b'{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"ANSWER: 7"}}',
+            b'{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}']) + b"\n"
+        ex = feed_all(providers.CodexExtractor(), stream)
+        self.assertEqual(ex.final_text(), "ANSWER: 7")
+        self.assertEqual(ex.partial_text(), "ANSWER: 7")             # the error text is not part of the answer
+        self.assertIsNone(ex.error())
+        self.assertEqual(ex.note(), "codex error item: tool x was skipped")      # a repeat is kept once
+        self.assertIsNone(feed_all(providers.CodexExtractor(), fixture("codex.jsonl")).note())   # no error item, no note
+        # an error item alone: still no answer and still no error of its own (only turn.failed fails the seat)
+        ex = feed_all(providers.CodexExtractor(), b'{"type":"item.completed","item":{"type":"error","message":"m"}}\n')
+        self.assertIsNone(ex.final_text())
+        self.assertIsNone(ex.error())
+        self.assertEqual(ex.note(), "codex error item: m")
+
     def test_19_argv_uses_last_file_council_provider_and_effort(self):
         la = self.build()
         a = la.argv

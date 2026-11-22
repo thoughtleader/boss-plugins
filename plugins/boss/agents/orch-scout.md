@@ -1,6 +1,6 @@
 ---
 name: orch-scout
-description: "Orchestrator protocol only: read-only discovery or diagnosis for one plan row; reuses maps and memory first, writes findings to the run folder. Use only when the orchestrator dispatches a discovery or diagnosis row. Not for open-ended searches (Explore)."
+description: "Orchestrator protocol only: read-only discovery or diagnosis for one plan row; reuses the maps and notes the brief names first, writes findings to the run folder. Use only when the orchestrator dispatches a discovery or diagnosis row. Not for open-ended searches (Explore)."
 tools: Read, Grep, Glob, Bash, Write, Skill, WebFetch, WebSearch, ToolSearch, mcp__plugin_claude-mem_mcp-search__*
 model: haiku
 effort: medium

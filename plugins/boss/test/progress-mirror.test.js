@@ -110,6 +110,44 @@ test('fold: an idle "waiting" stop (completed, newer than the last start) ends t
   assert.equal(s.items.find(i => i.id === 'row:1/a1').state, 'running');
 });
 
+test('fold: a provisional waiting stop (provisional: true) keeps the attempt open and running, says what it waits on, and a final or promoted stop ends it', () => {
+  const base = [
+    E(1, 'launch', { attempt: 'r#1.1', row: '1', n: 1, model: 'sonnet', effort: 'high', agent: 'orch-builder' }),
+    E(2, 'start', { attempt: 'r#1.1', row: '1' }),
+    E(3, 'stop', { attempt: 'r#1.1', row: '1', final: false, phase: 'waiting', status: 'completed', provisional: true, tokens: 500, tools: 7, ms: 4000 }),
+  ];
+  let s = PM.buildSnapshot('r', base, ctx());
+  let a = s.items.find(i => i.id === 'row:1/a1'), row = s.items.find(i => i.id === 'row:1');
+  assert.equal(a.state, 'running'); assert.equal(a.detail, 'waiting on its own background work'); assert.equal(a.ended_at, undefined);
+  assert.equal(row.state, 'running'); assert.equal(row.activity, 'waiting on its own background work');
+  assert.equal(s.counts[0].running, 1, 'a running row, not a finished one');
+  valid(s);
+  // a plan row's own activity cell wins over the generated one
+  s = PM.buildSnapshot('r', base, ctx({ plan: { txt: '| # | Subtask | Activity | Status |\n|---|---|---|---|\n| 1 | x | writing tests | running |\n', fm: {}, mtimeMs: 0 } }));
+  assert.equal(s.items.find(i => i.id === 'row:1').activity, 'writing tests');
+  // the true final notice replaces it
+  s = PM.buildSnapshot('r', base.concat([E(4, 'stop', { attempt: 'r#1.1', row: '1', final: true, phase: 'finished', status: 'completed', tokens: 900 })]), ctx());
+  a = s.items.find(i => i.id === 'row:1/a1'); assert.equal(a.state, 'done'); assert.equal(a.detail, undefined); assert.equal(a.meta.tokens, 900);
+  // a promoted final stop (ledger.js close / waiting-timeout) ends it too
+  s = PM.buildSnapshot('r', base.concat([E(4, 'stop', { attempt: 'r#1.1', row: '1', final: true, phase: 'finished', status: 'completed', promoted: 'close', tokens: 500 })]), ctx());
+  assert.equal(s.items.find(i => i.id === 'row:1/a1').state, 'done'); assert.equal(s.items.find(i => i.id === 'row:1').state, 'done');
+  // the promoted stop's own ts is the (later) promotion time: the attempt's ended_at is the waiting notice's time (ended_at on the stop); ts still orders it
+  const promoted = E(4, 'stop', { attempt: 'r#1.1', row: '1', final: true, phase: 'finished', status: 'completed', promoted: 'waiting-timeout', ts: '2026-10-31T14:00:00.000Z', ended_at: '2026-10-31T10:00:03.000Z', tokens: 500 });
+  s = PM.buildSnapshot('r', base.concat([promoted]), ctx());
+  a = s.items.find(i => i.id === 'row:1/a1');
+  assert.equal(a.state, 'done'); assert.equal(a.ended_at, '2026-10-31T10:00:03.000Z', 'the waiting notice time, not the promotion time'); assert.equal(a.meta.tokens, 500);
+  assert.equal(a.updated_at, '2026-10-31T14:00:00.000Z', 'updated_at keeps reading the write time');
+  valid(s);
+  // a promoted stop recorded before the field existed (no ended_at), or with an unreadable one, reads exactly as before: its ts
+  for (const bad of [undefined, 'not a date', 5]) {
+    const old = Object.assign({}, promoted); if (bad === undefined) delete old.ended_at; else old.ended_at = bad;
+    assert.equal(PM.buildSnapshot('r', base.concat([old]), ctx()).items.find(i => i.id === 'row:1/a1').ended_at, '2026-10-31T14:00:00.000Z', String(bad));
+  }
+  // a newer start (resumed): running as before, without the waiting note being the last word
+  s = PM.buildSnapshot('r', base.concat([E(4, 'start', { attempt: 'r#1.1', row: '1' })]), ctx());
+  assert.equal(s.items.find(i => i.id === 'row:1/a1').state, 'running'); assert.equal(s.items.find(i => i.id === 'row:1/a1').detail, undefined);
+});
+
 test('names: attempt and row are labelled by the human subtask, not the attempt id or model/effort', () => {
   const evs = [
     E(1, 'launch', { attempt: 'r#1.1', row: '1', n: 1, model: 'sonnet', effort: 'high', subtask: 'Explicit launch subtask' }),
@@ -163,6 +201,91 @@ test('plan: tolerant table parse, waves, gates, scoped counts, attention from a 
   assert.equal(s.items.find(i => i.id === 'row:x'), undefined, 'a non-row id is skipped');
   valid(s);
   assert.equal(PM.buildSnapshot('r', evs, ctx({ plan: { txt: 'not a plan', fm: {}, mtimeMs: 1 } })).items.filter(i => i.kind === 'wave').length, 0, 'no Wave column: no wave items');
+});
+
+// Events shaped like the follow-ups run's manifest: a continuation is a launch with `continues`, `task_id` and `cause` and never gets a start event;
+// its stop (final:true) is attributed to the continuation attempt, and the predecessor only gets a non-final `agent-stopped` line.
+test('continuation: a launch with `continues` and no stop yet is running (active task), until its final stop arrives', () => {
+  const plan = '| # | Subtask | Short name | Activity | Agent | Model/Effort | Wave | Status |\n|---|---|---|---|---|---|---|---|\n| 4 | Orchestrator small fixes | Small fixes | Fixing the review notes | orch-builder | sonnet/high | 1 | pending |\n';
+  const pctx = () => ctx({ plan: { txt: plan, fm: {}, mtimeMs: Date.parse('2026-10-31T09:00:00Z') } });
+  const first = [
+    E(1, 'launch', { attempt: 'r#4.1', row: '4', n: 1, model: 'sonnet', effort: 'high', agent: 'orch-builder', task_id: 'ad73' }),
+    E(2, 'start', { attempt: 'r#4.1', row: '4', description: '[sonnet/high] r#4.1 Orchestrator small fixes' }),
+    E(3, 'stop', { attempt: 'r#4.1', row: '4', final: true, phase: 'finished', status: 'completed' }),
+  ];
+  const cont = E(4, 'launch', { attempt: 'r#4.2', row: '4', n: 2, model: 'sonnet', effort: 'high', agent: 'orch-builder', continues: 'r#4.1', task_id: 'ad73', cause: 'review-findings' });
+  let s = PM.buildSnapshot('r', first.concat([cont]), pctx());
+  let a2 = s.items.find(i => i.id === 'row:4/a2'), row = s.items.find(i => i.id === 'row:4');
+  assert.equal(a2.state, 'running', 'no start event ever comes for a continuation'); assert.equal(a2.started_at, cont.ts);
+  assert.equal(row.state, 'running'); assert.equal(row.short_label, 'Small fixes'); assert.equal(row.activity, 'Fixing the review notes');
+  assert.deepEqual(s.counts[0].running, 1); assert.match(s.summary, /1 running/);
+  valid(s);
+  // the final stop (attributed to the continuation) ends it; a non-final stop on the predecessor does not
+  const substop = E(5, 'stop', { attempt: 'r#4.1', row: '4', final: false, phase: 'agent-stopped', status: null });
+  assert.equal(PM.buildSnapshot('r', first.concat([cont, substop]), pctx()).items.find(i => i.id === 'row:4/a2').state, 'running');
+  s = PM.buildSnapshot('r', first.concat([cont, substop, E(6, 'stop', { attempt: 'r#4.2', row: '4', final: true, phase: 'finished', status: 'completed' })]), pctx());
+  assert.equal(s.items.find(i => i.id === 'row:4/a2').state, 'done'); assert.equal(s.items.find(i => i.id === 'row:4').state, 'done');
+  // a plain retry launch (no `continues`) with no start is still queued
+  s = PM.buildSnapshot('r', first.concat([E(4, 'launch', { attempt: 'r#4.2', row: '4', n: 2, model: 'sonnet', effort: 'high' })]), pctx());
+  assert.equal(s.items.find(i => i.id === 'row:4/a2').state, 'queued'); assert.equal(s.items.find(i => i.id === 'row:4').state, 'queued');
+});
+
+test('gate: no "needs your decision" line while the fix round runs or has finished after the review; shown when nothing is being fixed', () => {
+  const plan = '| # | Subtask | Agent | Model/Effort | Wave | Status |\n|---|---|---|---|---|---|\n| 4 | Small fixes | orch-builder | sonnet/high | 1 | done |\n| 7 | Review the branch | orch-reviewer | opus/high | 2 | gaps_found |\n';
+  const pctx = () => ctx({ plan: { txt: plan, fm: {}, mtimeMs: Date.parse('2026-10-31T09:00:00Z') } });
+  const fixed = [ // row 4 built and finished, then the review (row 7) finished with gaps
+    E(1, 'launch', { attempt: 'r#4.1', row: '4', n: 1, model: 'sonnet', effort: 'high' }), E(2, 'start', { attempt: 'r#4.1', row: '4' }),
+    E(3, 'stop', { attempt: 'r#4.1', row: '4', final: true, phase: 'finished', status: 'completed' }),
+    E(4, 'launch', { attempt: 'r#7.1', row: '7', n: 1, model: 'opus', effort: 'high' }), E(5, 'start', { attempt: 'r#7.1', row: '7' }),
+    E(6, 'stop', { attempt: 'r#7.1', row: '7', final: true, phase: 'finished', status: 'completed' }),
+  ];
+  const decision = s => s.attention.filter(a => /needs your decision/.test(a.text));
+  const row7 = s => s.items.find(i => i.id === 'row:7');
+  let s = PM.buildSnapshot('r', fixed, pctx());
+  assert.equal(decision(s).length, 1, 'nothing under repair: the owner decides'); assert.equal(decision(s)[0].text, 'Row 7 is gaps_found: needs your decision'); assert.equal(row7(s).state, 'blocked');
+  // the fix round: row 4 continued with cause review-findings, no start event, no stop yet
+  const cont = E(7, 'launch', { attempt: 'r#4.2', row: '4', n: 2, model: 'sonnet', effort: 'high', continues: 'r#4.1', task_id: 't1', cause: 'review-findings' });
+  s = PM.buildSnapshot('r', fixed.concat([cont]), pctx());
+  assert.equal(decision(s).length, 0, 'the fix round is running'); assert.equal(s.attention.length, 0); assert.equal(row7(s).state, 'queued', 'the gate waits for the fix round, it is not blocked');
+  assert.equal(s.items.find(i => i.id === 'row:4').state, 'running'); valid(s);
+  // finished after the review: still no decision line
+  s = PM.buildSnapshot('r', fixed.concat([cont, E(8, 'stop', { attempt: 'r#4.2', row: '4', final: true, phase: 'finished', status: 'completed' })]), pctx());
+  assert.equal(decision(s).length, 0, 'the fix round has finished after the review');
+  // B1: a review that needs a person (human_needed) always stays blocked and keeps its line, whatever is being fixed
+  const hn = ctx({ plan: { txt: plan.replace('gaps_found', 'human_needed'), fm: {}, mtimeMs: Date.parse('2026-10-31T09:00:00Z') } });
+  s = PM.buildSnapshot('r', fixed.concat([cont]), hn);
+  assert.equal(row7(s).state, 'blocked'); assert.deepEqual(s.attention.map(a => a.text), ['Row 7 is human_needed: needs your decision']);
+  // `revise` is repairable like gaps_found
+  s = PM.buildSnapshot('r', fixed.concat([cont]), ctx({ plan: { txt: plan.replace('gaps_found', 'revise'), fm: {}, mtimeMs: Date.parse('2026-10-31T09:00:00Z') } }));
+  assert.equal(row7(s).state, 'queued'); assert.equal(s.attention.length, 0);
+  // C2: a fix round that was closed `blocked` or `dropped` (ledger.js close --outcome) is not a fix round: the line comes back; `accepted` or `retry` still count
+  const fin = E(8, 'stop', { attempt: 'r#4.2', row: '4', final: true, phase: 'finished', status: 'completed' });
+  for (const [outcome, lines] of [['blocked', 1], ['dropped', 1], ['accepted', 0], ['retry', 0]]) {
+    s = PM.buildSnapshot('r', fixed.concat([cont, fin, E(9, 'outcome', { attempt: 'r#4.2', row: '4', outcome })]), pctx());
+    assert.equal(decision(s).length, lines, outcome); assert.equal(row7(s).state, lines ? 'blocked' : 'queued', outcome);
+  }
+  // a fix round that ended before the review does not count; neither does a continuation with another cause, nor a queued (never started) fresh launch
+  const early = [fixed[0], fixed[1], E(3, 'launch', { attempt: 'r#4.2', row: '4', n: 2, model: 'sonnet', effort: 'high', continues: 'r#4.1', cause: 'review-findings' }),
+    E(4, 'stop', { attempt: 'r#4.2', row: '4', final: true, phase: 'finished', status: 'completed' }), ...fixed.slice(3).map(e => Object.assign({}, e, { seq: e.seq + 2, id: `r#e${e.seq + 2}`, ts: `2026-10-31T10:00:${String(e.seq + 2).padStart(2, '0')}.000Z` }))];
+  assert.equal(decision(PM.buildSnapshot('r', early, pctx())).length, 1, 'a fix launched before the review is not a fix of its findings');
+  assert.equal(decision(PM.buildSnapshot('r', fixed.concat([Object.assign({}, cont, { cause: 'owner-tune' })]), pctx())).length, 1, 'a continuation for another cause is not a fix round');
+  assert.equal(decision(PM.buildSnapshot('r', fixed.concat([E(7, 'launch', { attempt: 'r#4.2', row: '4', n: 2, cause: 'review-findings' })]), pctx())).length, 1, 'a launch that has not started is not running');
+  // `Depends on` names the rows a review covers: a retry for review findings of a row it does not name is not its fix round
+  const dplan = plan.replace('| Agent | Model/Effort | Wave | Status |\n|---|---|---|---|---|---|', '| Depends on | Agent | Model/Effort | Wave | Status |\n|---|---|---|---|---|---|---|')
+    .replace('| 4 | Small fixes | ', '| 4 | Small fixes | | ').replace('| 7 | Review the branch | ', '| 7 | Review the branch | %D% | ');
+  const dctx = d => ctx({ plan: { txt: dplan.replace('%D%', d), fm: {}, mtimeMs: Date.parse('2026-10-31T09:00:00Z') } });
+  assert.equal(decision(PM.buildSnapshot('r', fixed.concat([cont]), dctx('4'))).length, 0, 'row 4 is named: its fix round counts');
+  assert.equal(decision(PM.buildSnapshot('r', fixed.concat([cont]), dctx('5'))).length, 1, 'row 4 is not named: another review\'s fix round');
+  // a later attempt of the review row itself (re-check) that finished: the gate was the first attempt's result, so no decision line (the cell may be stale);
+  // when that re-check's own result still says gaps, the decision line is back
+  const recheck = fixed.concat([E(7, 'launch', { attempt: 'r#7.2', row: '7', n: 2 }), E(8, 'start', { attempt: 'r#7.2', row: '7' }), E(9, 'stop', { attempt: 'r#7.2', row: '7', final: true, phase: 'finished', status: 'completed' })]);
+  const resultFor = second => (row, L, id) => (row === '7' ? { path: `/x/7-${id}.md`, fm: { status: id === 'r#7.1' ? 'gaps_found' : second }, match: true } : null);
+  assert.equal(decision(PM.buildSnapshot('r', recheck, Object.assign(pctx(), { resultFor: resultFor('passed') }))).length, 0, 'the re-check finished after the gaps result');
+  assert.equal(decision(PM.buildSnapshot('r', recheck, Object.assign(pctx(), { resultFor: resultFor('gaps_found') }))).length, 1, 'the re-check found gaps too');
+  assert.equal(decision(PM.buildSnapshot('r', recheck, pctx())).length, 1, 'no result files known: the newest finish is the review, nothing came after it');
+  // a later attempt of the review row itself (re-check) running: no decision line either
+  s = PM.buildSnapshot('r', fixed.concat([E(7, 'launch', { attempt: 'r#7.2', row: '7', n: 2 }), E(8, 'start', { attempt: 'r#7.2', row: '7' })]), pctx());
+  assert.equal(decision(s).length, 0); assert.equal(row7(s).state, 'running');
 });
 
 test('plan: optional reporting columns (short name, activity, depends on, estimate, reviewable, instructions) become item fields', () => {

@@ -40,6 +40,7 @@ After any wave whose rows ran in worktrees, a serial `orch-builder` integration 
 
 - When the repo has a remote, first `git fetch` and check the target branch against origin (`git merge-base --is-ancestor origin/<target> <target>`); a target behind origin is a stop.
 - Merge the branches the pack lists, in its order, with `git merge --no-ff` (never rebase). A conflict the pack doesn't resolve is a stop.
+- A `git status` that prints nothing does not show skip-worktree or assume-unchanged files, and a merge still refuses to overwrite them: before a merge into a checkout, list them with `git ls-files -v | grep '^[Sh]'`, and if the branch changes one of them, lift the agent-tools patch first (`node "$BOSS_LIB/../hooks/agent-tools-patch.js" --lift`), merge, then run `node "$BOSS_LIB/../hooks/agent-tools-patch.js"` again. With no file argument `--lift` lifts the agents folder next to the script, so when the script is not the target checkout's own copy, pass that checkout's agent files as full paths; a copy older than 0.4.4 ignores `--lift` and patches instead.
 - Run the combined tests on the merged tree, then put the merged SHA in `sha:` and the branches in the result.
 
 ## Checks

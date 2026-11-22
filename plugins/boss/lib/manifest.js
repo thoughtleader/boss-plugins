@@ -221,6 +221,8 @@ const finalStops = g => g.stops.filter(s => s.final === true);
 // is swept or renoticed late gets a higher seq than the finished notice it preceded, and must not override it. Real stops keep seq order.
 // `stops` is in seq order (groupByAttempt); -> the stop or null. (progress-mirror.js keeps a copy of this rule: it is a pure module.)
 const TURN_LIMIT = 'stopped-turn-limit';
+// endTs(stop): the time the stop is shown as the row's end: a promoted stop's `ended_at` (its waiting notice's ts) when valid, else its ts. Display only.
+const endTs = s => (s.promoted && typeof s.ended_at === 'string' && Number.isFinite(Date.parse(s.ended_at)) ? s.ended_at : s.ts);
 const laterStop = (a, b) => { const ta = Date.parse(a.ts), tb = Date.parse(b.ts); return Number.isFinite(ta) && Number.isFinite(tb) ? ta > tb : (a.seq || 0) > (b.seq || 0); };
 const pickStop = stops => {
   const real = stops.filter(s => s.phase !== TURN_LIMIT);
@@ -232,7 +234,14 @@ const isVoided = g => g.voids.length > 0 && !g.starts.length && !g.stops.length;
 // The agent finished its turn but still owns background work ("is waiting on its own background work", status completed): the harness
 // sends only this interim notice. It counts as the final stop when no real final notice came and no start is newer (same rule as
 // progress-mirror.js attemptState); a later true final notice still wins (callers try finalStops first). -> the stop or null
-const idleStop = g => { const w = last(g.stops.filter(s => s.phase === 'waiting' && s.status === 'completed')); return w && (!g.starts.length || (last(g.starts).seq || 0) < (w.seq || 0)) ? w : null; };
+// Only an event without the `provisional` marker (written before the interim rule) counts here: a marked one is provisionalWait's.
+const isWaitNotice = s => s.phase === 'waiting' && s.status === 'completed';
+const newerThanStarts = (g, w) => !g.starts.length || (last(g.starts).seq || 0) < (w.seq || 0);
+const idleStop = g => { const w = last(g.stops.filter(s => isWaitNotice(s) && s.provisional !== true)); return w && newerThanStarts(g, w) ? w : null; };
+// An interim waiting notice recorded as provisional (ingest sets `provisional: true`): the figures are kept, the attempt is not stopped. The newest
+// one with no start after it and no final notice; null otherwise. ledger.js close and reconcile's waiting-timeout promote it (promoteWaiting).
+const provisionalWait = g => { const w = last(g.stops.filter(s => isWaitNotice(s) && s.provisional === true)); return w && !finalStops(g).length && newerThanStarts(g, w) ? w : null; };
+const waitGraceMs = () => { const v = Number(cfg.waitingGraceSec); return (Number.isFinite(v) && v > 0 ? v : 1800) * 1000; }; // config waitingGraceSec, default 30 min
 const noticeStops = g => g.stops.filter(s => s.phase !== 'agent-stopped');
 function metaFor(start) { // the meta.json under <dirname(transcript_path)>/<session>/subagents/ whose toolUseId matches, or null
   if (!start || !start.transcript_path || !start.tool_use_id || !start.session) return null;
@@ -273,8 +282,9 @@ function fold(run, opts = {}) {
     if (g.starts.some(s => s.id_in_brief === false)) flags.push('no-brief-line');
     if (g.starts.some(s => s.foreign_lease)) flags.push('foreign-lease');
     if (g.caps.length) flags.push(`over-cap:${last(g.caps).action}`);
-    if (fin.filter(x => x.phase !== TURN_LIMIT).length >= 2) flags.push('renotice'); // a turn-limit notice is a partial result, not a repeat of the finish
+    if (fin.filter(x => x.phase !== TURN_LIMIT && !x.promoted).length >= 2) flags.push('renotice'); // a turn-limit notice is a partial result, not a repeat of the finish
     if (fin.length && !ledger) flags.push('no-ledger-line');
+    if (provisionalWait(g)) flags.push('waiting-own-work'); // interim notice only: not done, not stopped
     if (launch && launch.continues) flags.push(`continuation-of ${launch.continues}`);
     attempts.push({ id: g.id, row: r, n: a ? a.n : launch ? launch.n : null, state,
       age_min: open && Number.isFinite(sinceMs) ? Math.max(0, Math.floor((now - sinceMs) / 60000)) : null, _since: Number.isFinite(sinceMs) ? sinceMs : 0,
@@ -722,6 +732,11 @@ Semantics
   - A turn-limit notice ("stopped at its N-turn limit", status completed, partial result) is stored as a final stop, phase stopped-turn-limit,
     status turn-limit: launch --continue accepts it, and the ledger line carries its numbers only while the attempt has no real final notice. It speaks for
     the attempt only when strictly later (by ts) than every real final stop: a late-ingested older one never overrides a finish. The progress item reads waiting_input.
+  - An interim notice ("is waiting on its own background work", status completed) is stored as a provisional stop (provisional: true, final false; its
+    figures kept): the attempt reads waiting (open), not stopped. reconcile reports it 'unknown waiting ... | wait', status and show say so, launch --continue
+    refuses, and no ledger line is written from it. The true final notice replaces it. With none: ledger.js close --attempt A promotes it, and reconcile
+    promotes one older than config waitingGraceSec (default 1800) with no later notice and prints 'waiting-timeout'; the promoted final stop carries
+    promoted: close | waiting-timeout. A waiting stop written before the marker existed still counts as final.
   - launch --continue P ingests P's transcript first (ledger.js ingest, as a child process, gated like reconcile's sweep: the
     caller's held runs plus R), then refuses (exit 2) until P has a final notice stop; the new launch records continues: P and
     P's task_id.
@@ -884,7 +899,8 @@ function launch(o) {
       const P = groups.get(cont.id);
       if (!P || !P.launches.length) refuse(`${cont.id} has no launch event in run ${run}; nothing to continue`);
       contStop = pickStop(finalStops(P)) || idleStop(P);
-      if (!contStop) refuse(`${cont.id} has no final stop yet; wait for its notice`);
+      if (!contStop) refuse(provisionalWait(P) ? `${cont.id} is waiting on its own background work (interim notice, not final); wait for its final notice, or close it: ledger.js close --attempt ${cont.id}`
+        : `${cont.id} has no final stop yet; wait for its notice`);
     }
     const rowLaunches = events.filter(e => e.type === 'launch' && String(e.row) === row && e.attempt); // voided ones still count for n: an ID is never reused
     let latest = null;
@@ -1034,13 +1050,40 @@ function frontmatter(file) { // flat `key: value` pairs between the first two --
   return fm;
 }
 // resultFor(run, row, launch, id, nAttempts) -> {path, fm, match} or null. launch.result, else <run>/<row>-*.md; a file whose
-// `attempt` is this ID wins; an attempt-less one matches only when the row has exactly one attempt.
+// `attempt` is this ID wins; an attempt-less one matches only when the row has exactly one attempt. A row with no letter also
+// considers <row><letter>-*.md (a fix round's 26b-fix.md for row 26) unless the run has a row of its own with that lettered ID
+// (a launch event for it, or a row in PLAN.md's Status table): 5a-x.md is row 5a's result, never row 5's, whatever it says inside.
+// Among those safe candidates a file naming this attempt wins; with none naming it, the exact <row>-*.md files are used alone,
+// and the lettered ones only when there is no exact file.
+const rowIdsCache = new Map(); // run -> {key, ids}: one manifest + PLAN.md read per change, not one per lookup
+function runRowIds(run) { // lower-cased row IDs the run knows: launch events plus PLAN.md's Status table
+  const planFile = path.join(runDir(run), 'PLAN.md'), sig = f => { try { const st = fs.statSync(f); return `${st.mtimeMs}:${st.size}`; } catch { return '-'; } };
+  const key = sig(manifestFile(run)) + '|' + sig(planFile), hit = rowIdsCache.get(run);
+  if (hit && hit.key === key) return hit.ids;
+  const ids = new Set();
+  try { for (const e of readEvents(run).events) if (e && e.type === 'launch' && e.row != null) ids.add(String(e.row).toLowerCase()); } catch {}
+  try { for (const r of planStatusRows(fs.readFileSync(planFile, 'utf8')) || []) if (r.row) ids.add(r.row); } catch {}
+  rowIdsCache.set(run, { key, ids });
+  return ids;
+}
 function resultFor(run, row, launch, id, nAttempts) {
-  let files = [];
+  let files = [], fallback = [];
   if (launch && launch.result) files = [String(launch.result)];
-  else { let names = []; try { names = fs.readdirSync(runDir(run)); } catch {} files = names.filter(f => f.toLowerCase().startsWith(row + '-') && f.endsWith('.md')).map(f => path.join(runDir(run), f)); }
-  const c = [];
-  for (const f of files) { const fm = frontmatter(f); if (!fm) continue; let mt = 0; try { mt = fs.statSync(f).mtimeMs; } catch {} c.push({ path: f, fm, mt }); }
+  else {
+    let names = []; try { names = fs.readdirSync(runDir(run)); } catch {}
+    const r = String(row).toLowerCase(), full = f => path.join(runDir(run), f);
+    files = names.filter(f => f.toLowerCase().startsWith(r + '-') && f.endsWith('.md')).map(full);
+    if (/^\d+$/.test(r)) {
+      const lettered = names.filter(f => new RegExp(`^${r}[a-z]-.*\\.md$`, 'i').test(f));
+      if (lettered.length) { const own = runRowIds(run); fallback = lettered.filter(f => !own.has(f.toLowerCase().slice(0, r.length + 1))).map(full); }
+    }
+  }
+  const load = fs_ => { const out = []; for (const f of fs_) { const fm = frontmatter(f); if (!fm) continue; let mt = 0; try { mt = fs.statSync(f).mtimeMs; } catch {} out.push({ path: f, fm, mt }); } return out; };
+  let c = load(files);
+  const fb = load(fallback);
+  const named = id ? [...c, ...fb].filter(x => x.fm.attempt === id).sort((x, y) => y.mt - x.mt)[0] : null;
+  if (named) return { path: named.path, fm: named.fm, match: true };
+  if (!c.length) c = fb;
   if (!c.length) return null;
   c.sort((a, b) => b.mt - a.mt);
   const exact = id ? c.find(x => x.fm.attempt === id) : null;
@@ -1084,9 +1127,30 @@ function rebuildStarts(run, g, notes) { // step 0(a), G6: a launch with a sessio
   }
   return n;
 }
+// promoteWaiting(run, id, how) -> {promoted, why?, event?}. how: 'close' (ledger.js close) | 'waiting-timeout' (reconcile). Appends one final stop (phase
+// finished, status completed) that copies the attempt's provisional waiting notice (figures, task, model) and carries `promoted: <how>` and
+// `promoted_from: <that event's id>` and `ended_at: <that notice's ts>` (when the row's agent really stopped; `ts` stays the time of the promotion, so ordering, dedupe
+// and activity checks keep reading write time; readers that show an end time or a duration prefer `ended_at`); the provisional event itself is never edited (the manifest is append-only). A true final notice that comes later
+// is a second final stop and wins as the newest (ledger line: updated, marker dropped). Idempotent: the key is per task and `how`. For waiting-timeout the
+// caller passes minAgeMs and `now`: a notice younger than that stays provisional.
+function promoteWaiting(run, id, how, opts = {}) {
+  const g = groupByAttempt(readEvents(run).events).get(id);
+  if (!g) return { promoted: false, why: 'no-attempt' };
+  if (finalStops(g).length) return { promoted: false, why: 'has-final' };
+  const w = provisionalWait(g);
+  if (!w) return { promoted: false, why: 'no-provisional' };
+  const ageMs = (opts.now || Date.now()) - Date.parse(w.ts);
+  if (opts.minAgeMs != null && !(ageMs >= opts.minAgeMs)) return { promoted: false, why: 'too-young', age_ms: ageMs };
+  const keep = ['task_id', 'tool_use_id', 'tokens', 'tools', 'ms', 'numbers_from', 'agent', 'model', 'effort', 'model_from', 'effort_from', 'model_id', 'effort_observed', 'result_bytes', 'output_file'];
+  const ev = Object.assign({ type: 'stop', attempt: id, row: w.row, key: `${w.task_id}:promoted:${how}`, via: how === 'close' ? 'ledger' : 'reconcile', session: process.env.WFP_SID || null,
+    status: 'completed', phase: 'finished', final: true, promoted: how, promoted_from: w.id, ended_at: w.ts }, Object.fromEntries(keep.filter(k => k in w).map(k => [k, w[k]])));
+  const r = appendEvent(run, ev);
+  return r.skipped ? { promoted: false, why: r.reason } : { promoted: !r.dup, why: r.dup ? 'dup' : undefined, event: r.event, age_ms: ageMs };
+}
 function judge(run, row, g, nAttempts, sid) { // steps 2-3 for one attempt
   const L = last(g.launches), id = g.id;
   const stop = pickStop(g.stops.filter(s => s.final === true && s.phase !== 'agent-stopped')) || idleStop(g);
+  const wait = stop ? null : provisionalWait(g); // interim waiting notice only: the agent waits on its own background work
   const metas = g.starts.map(s => ({ s, m: metaFor(s) })).filter(x => x.m);
   const unfinished = metas.filter(x => x.m.finished !== true);
   const live = !stop && unfinished.some(x => sid && x.s.session === sid);
@@ -1096,7 +1160,8 @@ function judge(run, row, g, nAttempts, sid) { // steps 2-3 for one attempt
   const commit = L.git ? trailerCommit(L.git, id) : null;
   const reasons = [];
   if (!stop) {
-    if (live) reasons.push('live');
+    if (wait) reasons.push('waiting');
+    else if (live) reasons.push('live');
     else if (otherUnfinished) reasons.push('unfinished-other-session');
     else if (g.stops.some(s => s.phase === 'agent-stopped') && !noticeStops(g).length) reasons.push('notice-pending');
     else reasons.push('no-stop');
@@ -1115,11 +1180,12 @@ function judge(run, row, g, nAttempts, sid) { // steps 2-3 for one attempt
   const verdict = reasons.length ? 'unknown' : 'done';
   let next;
   if (verdict === 'done') next = inList(status, cfg.passStatuses) ? 'advance' : 'gate';
-  else if (reasons.includes('live')) next = 'wait';
+  else if (reasons.includes('live') || reasons.includes('waiting')) next = 'wait';
   else if (!g.stops.length && !res && !(commit && commit.sha) && !unfinished.length) next = 'redispatch';
   else next = 'ask';
   const ev = {
-    stop: stop ? { phase: stop.phase, task_id: stop.task_id || null, ts: stop.ts } : null,
+    stop: stop ? Object.assign({ phase: stop.phase, task_id: stop.task_id || null, ts: endTs(stop) }, stop.promoted ? { promoted: stop.promoted } : {}) : null,
+    waiting: wait ? { ts: wait.ts, tokens: wait.tokens ?? null, tools: wait.tools ?? null, ms: wait.ms ?? null, age_min: Math.max(0, Math.floor((Date.now() - Date.parse(wait.ts)) / 60000)) } : null,
     result: res ? { path: res.path, match: res.match, status: res.fm.status || null, sha: res.fm.sha || null, sha_reason: shaReason || null, attempt: res.fm.attempt || null } : null,
     commit: commit ? (commit.sha ? { sha: commit.sha, branches: commit.branches, multiple: commit.multiple } : { sha: null, error: !!commit.error }) : null,
     git: L.git || null, live, unfinished_other_session: otherUnfinished, git_status: null,
@@ -1156,6 +1222,15 @@ function reconcile(o) {
     const att = [...groups.values()].filter(g => g.launches.length && !isVoided(g) && String(last(g.launches).row) === row);
     if (!att.length) { out.push(judgeLegacy(run, row)); continue; }
     let g = att[0]; for (const x of att) if ((last(x.launches).n || 0) > (last(g.launches).n || 0)) g = x;
+    if (provisionalWait(g)) { // the fallback: an interim waiting notice older than waitingGraceSec with no later notice becomes final, so the row cannot stay open for ever
+      const w = provisionalWait(g), ageMs = Date.now() - Date.parse(w.ts);
+      if (ageMs >= waitGraceMs()) { // ledger.js promote, as a child process (this module never requires ledger.js): the promoted final stop, then the ledger line
+        const c = spawnSync(process.execPath, [path.join(__dirname, 'ledger.js'), 'promote', '--attempt', g.id, '--by', 'waiting-timeout', '--min-age-sec', String(waitGraceMs() / 1000)], { encoding: 'utf8', timeout: 20000 });
+        const out1 = String(c.stdout || '').trim().split('\n')[0] || `promote failed: ${(String(c.stderr || '').split('\n').find(l => l.trim()) || `exit ${c.status}`).slice(0, 160)}`;
+        notes.push(`${g.id}: waiting-timeout: interim waiting notice older than ${Math.round(waitGraceMs() / 60000)} min with no later notice; ${out1.replace(`${g.id}: `, '')}`);
+        g = groupByAttempt(readEvents(run).events).get(g.id);
+      }
+    }
     out.push(judge(run, row, g, att.length, sid));
   }
   if (o.json) return console.log(JSON.stringify({ run, sid: sid || null, notes, sweep, rows: out }));
@@ -1164,7 +1239,7 @@ function reconcile(o) {
   console.log('row | attempt | verdict | evidence | next');
   for (const r of out) {
     const e = r.evidence, sh = x => String(x).slice(0, 7);
-    const ev = [e.stop ? `stop ${e.stop.phase}` : 'stop none',
+    const ev = [e.stop ? `stop ${e.stop.phase}${e.stop.promoted ? ` (promoted: ${e.stop.promoted})` : ''}` : e.waiting ? `stop none (waiting on its own background work, interim notice ${e.waiting.age_min}m old)` : 'stop none',
       e.result ? `result ${e.result.status || '?'}@${e.result.path}${e.result.match ? '' : ' (other attempt)'}` : 'result none'];
     if (r.verdict !== 'legacy') ev.push(e.commit ? (e.commit.sha ? `commit ${sh(e.commit.sha)}@${e.commit.branches.join(',') || '?'}` : 'commit none') : `commit n/a (no --git)`);
     if (e.result && /^none$/i.test(String(e.result.sha || ''))) ev.push(`sha: none${e.result.sha_reason ? ` (${e.result.sha_reason})` : ''}`);
@@ -1300,25 +1375,9 @@ function activity(o) {
 // pending, running, blocked or orphaned (W1). No PLAN.md, no Status section, no table or no data rows: not done.
 const NOT_DONE_RE = /\b(pending|running|blocked|orphaned)\b/i;
 // planStatusRows(PLAN.md text) -> [{row, status}] from the `## Status` section's first table (row: the '#' column, else the first,
-// lower-cased), or null when there is no such table or it has no Status column. Shared by planDone and status.
-function planStatusRows(txt) {
-  if (typeof txt !== 'string') return null;
-  const lines = txt.split(/\r?\n/), h = lines.findIndex(l => /^##\s+Status\b/i.test(l));
-  if (h < 0) return null;
-  let i = h + 1;
-  while (i < lines.length && !/^##\s/.test(lines[i]) && !lines[i].trim().startsWith('|')) i++;
-  if (i >= lines.length || !lines[i].trim().startsWith('|')) return null;
-  const cells = l => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
-  const head = cells(lines[i]).map(c => c.toLowerCase()), col = head.indexOf('status'), idCol = Math.max(0, head.indexOf('#'));
-  if (col < 0) return null;
-  const rows = [];
-  for (let j = i + 1; j < lines.length && lines[j].trim().startsWith('|'); j++) {
-    if (/^\|[\s:|-]+$/.test(lines[j].trim())) continue; // the separator row
-    const c = cells(lines[j]);
-    rows.push({ row: String(c[idCol] || '').toLowerCase(), status: c[col] || '' });
-  }
-  return rows;
-}
+// lower-cased), or null when there is no such table or it has no Status column. Shared by planDone and status; the parser lives in
+// plan-status.js (also used by ledger.js close --plan-status), which requires neither this file nor ledger.js.
+const { planStatusRows } = require('./plan-status.js');
 function planDone(txt) {
   const rows = planStatusRows(txt);
   return !!rows && rows.length > 0 && !rows.some(r => NOT_DONE_RE.test(r.status));
@@ -1452,7 +1511,8 @@ function statusOf(run, sid, now) { // -> the per-row view; reads PLAN.md, manife
     return { row, subtask: sub ? sub.subtask : null, status: cell != null && cell !== '' ? cell : lat ? lat.state : null, status_from: cell != null && cell !== '' ? 'plan' : lat ? 'attempt' : null,
       attempts: Math.max(atts.length, lines.length), latest: lat ? lat.id : lastLine && typeof lastLine.id === 'string' ? lastLine.id : null,
       model: L && L.model ? L.model : lastLine ? lastLine.model || null : null, effort: L && L.effort ? L.effort : lastLine ? lastLine.effort || null : null,
-      sha: res && res.fm.sha ? res.fm.sha : null, result: res ? res.path : null, open: atts.some(a => OPEN.includes(a.state)),
+      sha: res && res.fm.sha ? res.fm.sha : null, result: res ? res.path : null, open: atts.some(a => OPEN.includes(a.state)), ...(lat && lat.flags.includes('waiting-own-work') ? { waiting: true } : {}), // only a provisional waiting row carries the key: other rows' JSON is unchanged
+     
       tokens: sumOf(lines, 'tokens'), ms: sumOf(lines, 'ms') };
   });
   // a plan cell counts as done like planDone does (closed/skipped/dropped too); a status taken from an attempt state uses isDoneStatus (same words, unknown states stay not done)
@@ -1474,7 +1534,7 @@ function status(o) {
     if (o.json) return console.log(JSON.stringify(S));
     console.log(`status: run ${run}  preset ${S.preset || '?'}  plan ${S.plan ? 'yes' : 'no'}  rows ${S.rows_done}/${S.rows_total}`);
     if (S.rows.length) for (const l of padTable([['row', 'subtask', 'status', 'attempts', 'latest', 'model/effort', 'sha', 'tokens', 'time'],
-      ...S.rows.map(r => [r.row, r.subtask ? clip(r.subtask, 40) : '-', r.status || '-', r.attempts, r.latest || '-', r.model || r.effort ? `${r.model || '?'}/${r.effort || '?'}` : '-',
+      ...S.rows.map(r => [r.row, r.subtask ? clip(r.subtask, 40) : '-', r.waiting ? (r.status && r.status !== 'waiting' ? `${r.status} (waiting on own background work)` : 'waiting (own background work)') : r.status || '-', r.attempts, r.latest || '-', r.model || r.effort ? `${r.model || '?'}/${r.effort || '?'}` : '-',
         r.sha ? (/^[0-9a-f]{8,40}$/i.test(r.sha) ? r.sha.slice(0, 7) : r.sha) : '-', fmtPart(r.tokens, fmtTok), fmtPart(r.ms, fmtMs)])])) console.log(l);
     console.log(leaseLine(S.lease));
     return;
@@ -1557,7 +1617,7 @@ function main(argv) {
   spec[0](parseFlags(argv.slice(1), spec[1]));
 }
 module.exports = { main, ORCH_DIR, RUNS, PROJECTS, cfg, parseAttemptId, parseDescription, appendEvent, readEvents, fold, openAttemptIds, hasLaunch, runIngest, metaFor, withLock,
-  leaseState, renewIfMine, heldLeases };
+  leaseState, renewIfMine, heldLeases, promoteWaiting };
 if (require.main === module) {
   try { main(process.argv.slice(2)); } catch (e) {
     if (e instanceof UsageError) { console.error(`manifest: error: ${e.message}\n(usage: node "$BOSS_LIB/manifest.js" help)`); process.exit(2); }

@@ -10,6 +10,7 @@ const ORCH_DIR = paths.dataDir(); // same resolution as manifest.js
 const RUNS = paths.runsDir();
 let manifestMod = null; // manifest.js is required lazily (ingest, --attempt), so add/show/update never depend on it
 const MF = () => manifestMod || (manifestMod = require(path.join(__dirname, 'manifest.js')));
+const PS = () => require(path.join(__dirname, 'plan-status.js')); // the Status-table parser and row editor, shared with manifest.js
 let leaseMod = null; // lease-store.js is required lazily (ingest only: --sid / --run, and the no-sid live-holder check)
 const LSM = () => leaseMod || (leaseMod = require(path.join(__dirname, 'lease-store.js')));
 const ROLES = ['planning', 'plan-check', 'discovery', 'implementation', 'diagnosis', 'review', 'default'];
@@ -28,9 +29,22 @@ const HELP = `ledger.js: per-run token/outcome ledger, one JSONL line per attemp
   update --attempt <id> | --run <run> --ts <iso> | --run <run> --row <n>
          [--first-pass y|n] [--cause owner-tune|review-findings|failed|tooling] [--retries N] [--escalated y|n] [--retry-kind continue|fresh] [--tokens N] [--tools N] [--ms N]
   close  --attempt <id> --first-pass y|n --outcome accepted|retry|blocked|dropped [--cause owner-tune|review-findings|failed|tooling] [--retries N] [--escalated y|n]
+         [--plan-status "<text>" [--plan-result "<text>"]] [--decision "<text>"]
          the row close: first-pass, cause and outcome in one call (one line edit; one outcome event with via close, cause and outcome when the
          run has a manifest). --cause is required with --first-pass n or --outcome retry, and refused with --first-pass y unless owner-tune.
+         On an attempt whose only notice is an interim 'waiting on its own background work' one, close first promotes that notice to final (marker
+         promoted=close on the stop event and the ledger line), so a row whose final notice never comes can still be closed.
+         --plan-status "<text>" (opt-in) also edits the attempt's row in <run>/PLAN.md's '## Status' table, columns found by header name: Status = text,
+         'Ran on (model/effort)' = the launch event's model/effort, Attempt = the ID, 'First-pass review' = y|n, Retries and Escalated when given,
+         'SHA / result' only with --plan-result "<text>". Every other line of PLAN.md stays byte for byte as it was. --decision "<text>" (opt-in)
+         appends '- <YYYY-MM-DD HH:MM TZ> · <text>' to <run>/DECISIONS.md, which must already exist. A '|' in a table text is written as '\\|'; a line
+         break in any of the texts is refused. All or nothing: every check (PLAN.md and its Status table, one line for the row, the needed headers,
+         DECISIONS.md) runs before anything changes; a failed check closes nothing and exits 2. Without these flags close writes only as above.
          Prints 'ledger: closed <id>: firstPass=<b> cause=<c> outcome=<o> closed=<iso>'. Exit 2 on a usage error or when the line is missing.
+  promote --attempt <id> --by close|waiting-timeout [--min-age-sec N]
+         makes the attempt's interim 'waiting on its own background work' notice final (a promoted final stop in the manifest, then the ledger line
+         from its figures). Refuses a notice younger than --min-age-sec. manifest.js reconcile calls it with --by waiting-timeout (child process); close
+         does the same in-process. Prints '<id>: promoted (<by>), ledger line <written|updated|same|none:why>' or '<id>: not promoted (<why>)'. Exit 0 either way.
   backfill-models [--run R] [--since <date|iso>] [--dry-run] [--json]
          fills model_id (the resolved model, e.g. claude-opus-5-5) on ledger lines that lack it: from the attempt's stop events, else the
          subagent transcript's model attachment (agent-<task>.jsonl under the start's or the launch/stop sessions' subagents folders,
@@ -323,10 +337,76 @@ function update(o, extra = null) { // extra (close only): {set: fields stored on
     } catch (e) { console.error(`ledger: note: outcome event not written (${e && e.message})`); }
   }
 }
+// close on an attempt whose only notice is an interim (provisional) waiting one: the closer's word makes that notice final (manifest.js promoteWaiting,
+// marker `promoted: close` on the stop event and the ledger line), and the ledger line is written from its figures so the update below finds it.
+function promoteForClose(attempt) {
+  const a = attemptV(attempt, 'attempt');
+  if (!fs.existsSync(path.join(RUNS, a.run, 'manifest.jsonl'))) return;
+  const r = MF().promoteWaiting(a.run, a.id, 'close');
+  if (r.promoted) console.log(`ledger: ${a.id}: interim waiting notice promoted to final by close (ledger line ${ensureLedgerLine(a.id)})`);
+}
+function promote(o) {
+  for (const f of Object.keys(o)) if (!['attempt', 'by', 'min-age-sec'].includes(f)) fail(`promote: unknown flag --${f} (promote --attempt <id> --by close|waiting-timeout [--min-age-sec N])`);
+  if (o.attempt === undefined || o.by === undefined) fail('promote: needs --attempt <id> --by close|waiting-timeout');
+  if (!['close', 'waiting-timeout'].includes(o.by)) fail(`promote: --by '${o.by}': close or waiting-timeout`);
+  const a = attemptV(o.attempt, 'attempt'), min = o['min-age-sec'] !== undefined ? Number(o['min-age-sec']) : null;
+  if (min !== null && !(Number.isFinite(min) && min >= 0)) fail(`promote: --min-age-sec '${o['min-age-sec']}': seconds, 0 or more`);
+  if (!fs.existsSync(path.join(RUNS, a.run, 'manifest.jsonl'))) fail(`promote: run ${a.run} has no manifest`);
+  const r = MF().promoteWaiting(a.run, a.id, o.by, min === null ? {} : { minAgeMs: min * 1000 });
+  console.log(r.promoted ? `${a.id}: promoted (${o.by}), ledger line ${ensureLedgerLine(a.id)}${r.age_ms != null ? `, interim notice ${Math.floor(r.age_ms / 60000)} min old` : ''}` : `${a.id}: not promoted (${r.why})`);
+}
 // P31 row close: first-pass, cause and the row's outcome in one call (one line edit and one outcome event).
 // --cause is required when --first-pass is n or --outcome is retry; it is refused with --first-pass y unless it is owner-tune.
+// The opt-in close writes (--plan-status, --plan-result, --decision). closeFiles(o, attempt, firstPass) checks everything first and returns the
+// files to write as [{file, text, label}], changing nothing; a failed check is a usage error (exit 2). The caller stages them, closes, then renames.
+const ONE_LINE = (flag, v) => {
+  if (/[\r\n\u2028\u2029]/.test(String(v))) fail(`close: --${flag} has a line break; give one line`);
+  const t = String(v).trim(); if (!t) fail(`close: --${flag} is empty`);
+  return t;
+};
+function stamp(d = new Date()) { // local time, the zone's short name: 2026-11-21 18:39 PST
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short' })
+    .formatToParts(d).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${p.timeZoneName}`;
+}
+function ranOn(a) { // the attempt's model/effort: its launch event, else its ledger line
+  let src = null;
+  try { src = MF().readEvents(a.run).events.filter(e => e && e.type === 'launch' && e.attempt === a.id).pop() || null; } catch {}
+  if (!src) { const f = ledgerFile(a.run); if (fs.existsSync(f)) src = readRows(f).rows.find(x => x.id === a.id) || null; }
+  if (!src || !src.model) fail(`close: --plan-status: no launch event or ledger line for ${a.id}, so its model/effort is unknown`);
+  return src.effort ? `${src.model}/${src.effort}` : String(src.model);
+}
+function closeFiles(o, a, fp) {
+  const files = [];
+  if (o['plan-result'] !== undefined && o['plan-status'] === undefined) fail('close: --plan-result goes with --plan-status');
+  const text = {};
+  for (const f of ['plan-status', 'plan-result', 'decision']) if (o[f] !== undefined) text[f] = ONE_LINE(f, o[f]);
+  if (text['plan-status'] !== undefined) {
+    const file = path.join(RUNS, a.run, 'PLAN.md');
+    if (!fs.existsSync(file)) fail(`close: --plan-status: ${file} does not exist; nothing changed`);
+    const values = { status: text['plan-status'], ran: ranOn(a), attempt: a.id, firstPass: fp ? 'y' : 'n' };
+    if (o.retries !== undefined) values.retries = String(FIELDS.retries[1](o.retries));
+    if (o.escalated !== undefined) values.escalated = FIELDS.escalated[1](o.escalated) ? 'y' : 'n';
+    if (text['plan-result'] !== undefined) values.result = text['plan-result'];
+    const r = PS().editStatusRow(fs.readFileSync(file, 'utf8'), a.row, values);
+    if (r.error) fail(`close: --plan-status: ${r.error} (${file}); nothing changed`);
+    files.push({ file, text: r.text, label: `PLAN.md row ${a.row} (${Object.keys(values).join(', ')})` });
+  }
+  if (text.decision !== undefined) {
+    const file = path.join(RUNS, a.run, 'DECISIONS.md');
+    if (!fs.existsSync(file)) fail(`close: --decision: ${file} does not exist (close creates no file); nothing changed`);
+    const old = fs.readFileSync(file, 'utf8'), eol = /\r\n/.test(old) ? '\r\n' : '\n';
+    files.push({ file, text: old + (old && !old.endsWith('\n') ? eol : '') + `- ${stamp()} · ${text.decision}${eol}`, label: 'DECISIONS.md: one line appended' });
+  }
+  return files;
+}
+function stageFile(f) { // a temp file in the target's own folder; renamed over it once the ledger is closed
+  const tmp = `${f.file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, f.text, { mode: fs.statSync(f.file).mode & 0o777 });
+  return Object.assign(f, { tmp });
+}
 function close(o) {
-  const allowed = ['attempt', 'first-pass', 'outcome', 'cause', 'retries', 'escalated'];
+  const allowed = ['attempt', 'first-pass', 'outcome', 'cause', 'retries', 'escalated', 'plan-status', 'plan-result', 'decision'];
   for (const f of Object.keys(o)) if (!allowed.includes(f)) fail(`close: unknown flag --${f} (flags: ${allowed.map(x => '--' + x).join(' ')})`);
   const miss = ['attempt', 'first-pass', 'outcome'].filter(f => o[f] === undefined);
   if (miss.length) fail(`close: missing ${miss.map(f => '--' + f).join(' ')} (close --attempt <id> --first-pass y|n --outcome ${OUTCOMES.join('|')} [--cause ${CAUSES.join('|')}])`);
@@ -334,10 +414,17 @@ function close(o) {
   if (cause === UNSTATED) fail(`close: --cause '${o.cause}': one of ${CAUSES.join(', ')}`);
   if (!cause && (fp === false || outcome === 'retry')) fail(`close: --cause ${CAUSES.join('|')} is required with ${fp === false ? '--first-pass n' : '--outcome retry'}`);
   if (cause && fp === true && cause !== 'owner-tune') fail(`close: --cause ${cause} with --first-pass y; a passed attempt is retried only as owner-tune`);
-  const u = { attempt: o.attempt, 'first-pass': o['first-pass'] };
-  if (cause) u.cause = cause;
-  for (const f of ['retries', 'escalated']) if (o[f] !== undefined) u[f] = o[f];
-  update(u, { verb: 'close', set: { outcome, closed: new Date().toISOString() } });
+  const files = closeFiles(o, attemptV(o.attempt, 'attempt'), fp); // every check, before anything changes
+  const staged = [];
+  try {
+    for (const f of files) staged.push(stageFile(f));
+    promoteForClose(o.attempt);
+    const u = { attempt: o.attempt, 'first-pass': o['first-pass'] };
+    if (cause) u.cause = cause;
+    for (const f of ['retries', 'escalated']) if (o[f] !== undefined) u[f] = o[f];
+    update(u, { verb: 'close', set: { outcome, closed: new Date().toISOString() } });
+  } catch (e) { for (const f of staged) try { fs.rmSync(f.tmp, { force: true }); } catch {} throw e; }
+  for (const f of staged) { fs.renameSync(f.tmp, f.file); console.log(`ledger: ${f.label} -> ${f.file}`); }
 }
 const fmtTok = n => n == null ? '-' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
 const fmtMs = n => n == null ? '-' : n >= 36e5 ? (n / 36e5).toFixed(1) + 'h' : n >= 6e4 ? (n / 6e4).toFixed(1) + 'm' : Math.round(n / 1e3) + 's';
@@ -528,9 +615,12 @@ function pick(cands, parse) { // first [value, from] whose value parses; -> [val
 }
 const bySeq = (a, b) => (a.seq || 0) - (b.seq || 0);
 const lastOf = a => a.length ? a[a.length - 1] : null;
-// A `waiting` notice with status completed (the agent's turn ended, it still owns background work) is the final stop until a later true final one
-// arrives: it writes the ledger line, and the finished notice then updates that line (ensureLedgerLine's `updated`), never a second one.
-const isNoticeFinal = e => e.type === 'stop' && e.phase !== 'agent-stopped' && (e.final === true || (e.phase === 'waiting' && e.status === 'completed'));
+// A `waiting` notice with status completed (the agent's turn ended, it still owns background work) is interim: ingest marks the stop event
+// `provisional: true` (figures kept, final false), and it is not final: no ledger line, no done row. A later true final notice is the final stop; with none,
+// `ledger.js close` or reconcile's waiting-timeout appends a promoted final stop (`promoted: close | waiting-timeout`, manifest.js promoteWaiting).
+// An older event without the marker (written before this rule) still counts as final, as it did: it wrote the ledger line, and the finished notice
+// then updates that line (ensureLedgerLine's `updated`), never a second one.
+const isNoticeFinal = e => e.type === 'stop' && e.phase !== 'agent-stopped' && (e.final === true || (e.phase === 'waiting' && e.status === 'completed' && e.provisional !== true));
 // One notice -> its output line. opts: {via, ts (the source record's timestamp; sweep), usage (queued_command JSON),
 // transcriptPath, sessionId, meta, held}. The prompt / CLI path has no ts: the notice is always newer than any launch (rule 1).
 // held (OD-3 gate): an array of run names is the allowed set (an ID outside it: none:not-held; an ID-less notice is matched
@@ -591,7 +681,7 @@ function ingestNotice(n, opts) {
   const row = attempt ? M.parseAttemptId(attempt).row : start && start.row != null ? start.row : null;
   const ev = { type: 'stop', attempt, row, key: `${n.task_id}:${n.phase}:${nk == null ? '-' : nk}:${nm == null ? '-' : nm}`, via: opts.via || 'cli',
     session: SAFE_ID(opts.sessionId) ? opts.sessionId : null, task_id: n.task_id, tool_use_id: n.tool_use_id || null, status: n.status || null,
-    phase: n.phase, final: n.final, tokens, tools, ms: nm, numbers_from, agent: agent || null, model, effort: effort0 || (attempt ? 'unknown' : null),
+    phase: n.phase, final: n.final, ...(n.phase === 'waiting' && n.status === 'completed' ? { provisional: true } : {}), tokens, tools, ms: nm, numbers_from, agent: agent || null, model, effort: effort0 || (attempt ? 'unknown' : null),
     model_from, effort_from: effort0 ? effort_from : attempt ? 'default' : null, model_id: sf.model_id, effort_observed: sf.effort_observed,
     result_bytes: n.result_bytes, output_file: n.output_file || null, renotice: evs.some(e => e.type === 'stop' && e.task_id === n.task_id && e.phase !== 'agent-stopped') };
   if (opts.ts && Number.isFinite(Date.parse(opts.ts))) ev.ts = new Date(Date.parse(opts.ts)).toISOString();
@@ -633,8 +723,11 @@ function ensureLedgerLine(attempt) {
   const st = lastOf(evs.filter(e => e.type === 'start'));
   const [agent] = pick([...S].reverse().map(s => [s.agent, 'stop']).concat([[st && st.agent, 'start'], [L.agent, 'launch']]), V.agent);
   const prevL = a.n > 1 ? lastOf(M.readEvents(a.run).events.filter(e => e.type === 'launch' && e.attempt === `${a.run}#${a.row}.${a.n - 1}`).sort(bySeq)) : null;
-  const rec = { ts: S[0].ts, id: a.id, run: a.run, row: rowVal(a.row), role: L.role || 'default', agent: agent || 'unknown', model, effort: effort || 'unknown',
+  const endAt = S[0].promoted && typeof S[0].ended_at === 'string' && Number.isFinite(Date.parse(S[0].ended_at)) ? S[0].ended_at : null; // a promoted waiting line: the line's ts is the waiting notice's time (when the row really ended); the promotion time goes to promoted_at
+  const rec = { ts: endAt || S[0].ts, id: a.id, run: a.run, row: rowVal(a.row), role: L.role || 'default', agent: agent || 'unknown', model, effort: effort || 'unknown',
     mode: L.mode || null, tokens, tools, ms, repo: L.repo || null, area: L.area || null, firstPass: null, retries: a.n - 1, escalated: false };
+  const prom = typeof S[S.length - 1].promoted === 'string' && S[S.length - 1].promoted; // the newest final is a promoted interim notice: say how (close | waiting-timeout); a true final after it drops the marker
+  if (prom) { rec.promoted = prom; if (endAt && S[S.length - 1] === S[0]) rec.promoted_at = S[0].ts; } // promoted_at: when the promotion was written (the line's ts is the notice's time); only while that promoted stop is the line's newest final
   if (model_id) rec.model_id = model_id; // only when known: lines without it keep the classic field set (sync reads a missing key as NULL)
   if (a.n > 1) rec.retry_kind = L.continues ? 'continue' : 'fresh'; // the launch event's `continues` (launch --continue); attempt 1 has none
   if (a.n > 1 && typeof L.cause === 'string' && L.cause) rec.retry_cause = L.cause; // P31: the launch's --cause (or unstated); older launches have none
@@ -650,9 +743,11 @@ function ensureLedgerLine(attempt) {
     const fillKind = x.retry_kind == null && rec.retry_kind != null; // heal a line written before the field (or by add) from the launch event; never override a set value
     const fillMid = x.model_id == null && rec.model_id != null; // same for the resolved model ID
     const fillCause = x.retry_cause == null && rec.retry_cause != null; // and the launch's retry cause
-    if (x.tokens === rec.tokens && x.tools === rec.tools && x.ms === rec.ms && !fillKind && !fillMid && !fillCause) return 'same';
+    const promChg = (x.promoted || null) !== (rec.promoted || null); // a true final notice after a promotion drops the marker; a promotion of an older line sets it
+    if (x.tokens === rec.tokens && x.tools === rec.tools && x.ms === rec.ms && !fillKind && !fillMid && !fillCause && !promChg) return 'same';
     Object.assign(x, { tokens: rec.tokens, tools: rec.tools, ms: rec.ms, updated: new Date().toISOString() }, fillKind ? { retry_kind: rec.retry_kind } : {}, fillMid ? { model_id: rec.model_id } : {},
       fillCause ? { retry_cause: rec.retry_cause } : {});
+    if (promChg) { if (rec.promoted) { x.promoted = rec.promoted; if (rec.promoted_at) x.promoted_at = rec.promoted_at; } else { delete x.promoted; delete x.promoted_at; } }
     lines[idx] = JSON.stringify(x);
     const tmp = `${file}.${process.pid}.tmp`; fs.writeFileSync(tmp, lines.join('\n')); fs.renameSync(tmp, file);
     return 'updated';
@@ -1001,7 +1096,7 @@ function main(argv) {
   if (cmd === 'dashboard') return dashboardCmd(argv.slice(1)); // raw argv: boolean flags
   if (cmd === 'cron') return cronCmd(argv.slice(1));
   if (cmd === 'backfill-models') return backfillModels(argv.slice(1)); // raw argv: --dry-run and --json are boolean flags
-  const fn = { add, update, close, show, ingest }[cmd];
+  const fn = { add, update, close, show, ingest, promote }[cmd];
   if (!fn) fail(`unknown command '${cmd}' (add | update | show | ingest | help); row close: close; model backfill: backfill-models; read-only: cost; metrics: sync | report | dashboard | cron`);
   fn(parseFlags(argv.slice(1)));
 }

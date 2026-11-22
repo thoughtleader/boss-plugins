@@ -91,3 +91,25 @@ test('compact and progress.js accept a run folder path under the runs dir as wel
     assert.equal(sb.run(COMPACT, '../x').status, 2);
   } finally { sb.done(); }
 });
+
+test('a row whose attempt only sent an interim waiting notice (provisional) shows as running in --details and compact, never done, and nothing crashes', () => {
+  const sb = sandbox();
+  try {
+    const MAN = path.join(PLUGIN, 'lib', 'manifest.js'), man = (...a) => spawnSync(process.execPath, [MAN, ...a], { env: sb.env, encoding: 'utf8' });
+    const l = man('launch', '--run', 'r1', '--row', '1', '--role', 'implementation', '--agent', 'orch-builder', '--model', 'sonnet', '--effort', 'high', '--mode', 'subagent', '--repo', 'x', '--area', 'y');
+    assert.equal(l.status, 0, l.stderr);
+    const ev = (type, f) => { const r = man('event', '--run', 'r1', '--type', type, '--json', JSON.stringify(f)); assert.equal(r.status, 0, r.stderr); };
+    ev('start', { attempt: 'r1#1.1', tool_use_id: 'tu-w', session: 'S1' });
+    ev('stop', { attempt: 'r1#1.1', task_id: 'w1', phase: 'waiting', status: 'completed', provisional: true, tokens: 500, tools: 7, ms: 4000 });
+    const det = sb.run(PROGRESS, 'r1', '--details');
+    assert.equal(det.status, 0, det.stderr);
+    assert.match(det.stdout, /Build it/);
+    assert.doesNotMatch(det.stdout, /\bdone\b/i, 'the waiting row is not shown as done');
+    assert.match(det.stdout, /running/i);
+    const out = sb.run(COMPACT, 'r1'); assert.equal(out.status, 0, out.stderr);
+    // the final notice then ends it
+    ev('stop', { attempt: 'r1#1.1', task_id: 'w1', phase: 'finished', status: 'completed', final: true, tokens: 900, tools: 9, ms: 6000 });
+    const after = sb.run(PROGRESS, 'r1', '--details'); assert.equal(after.status, 0, after.stderr);
+    assert.match(after.stdout, /done/i);
+  } finally { sb.done(); }
+});

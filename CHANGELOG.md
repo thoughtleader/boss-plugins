@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.4 (2026-11-22)
+
+### Added
+- `ledger.js close` can also update the plan: `--plan-status` writes the row's Status cell (with the model, attempt and first-pass cells), `--plan-result` adds the result cell, and `--decision` appends a line to `DECISIONS.md`; all are opt-in, and every check runs first, so a failed check closes nothing and changes no file.
+- `ledger.js promote --attempt <id> --by close|waiting-timeout` turns a provisional waiting notice into a final one.
+- Council: `--allow-grounded-root` (on `ask`, `run` and `preflight`, only with `--grounded`) turns the refusal of a risky `--grounded` root into a warning that names what was found.
+- Council preflight shows a `routing_pref` row when an OpenRouter seat sets `sort`, `preferred_min_throughput` or `preferred_max_latency`.
+- `plugins/boss/test/council-tests.sh --full` runs the whole council suite behind a guard that refuses to run outside a scratch home, with shims in place of the provider tools; the council test runner also blocks connections to anything but the local machine.
+- `node <plugin dir>/hooks/agent-tools-patch.js --lift [<file>...]` undoes the opt-in agent-tools patch before a merge: it restores the committed text of each patched agent file and clears its skip-worktree flag, prints one line per file, and refuses (exit 1) any file that has another local change. Only skip-worktree files are lifted (an assume-unchanged file is reported "not patched"). `--lift` exists from 0.4.4 on: an older copy of the script ignores the flag and patches instead. With no file argument it lifts the agents folder next to the script, so to lift another checkout pass that checkout's agent files as full paths. Run the patcher again with no argument after the merge; it puts back only the extra tools the config lists, so `tools:` entries added by hand that the config does not list are not restored.
+
+### Changed
+- A notice that says the agent is "waiting on its own background work" is now provisional: the row stays open (reconcile shows `waiting`) until `ledger.js close`, `ledger.js promote --attempt <id>`, or reconcile after `waitingGraceSec` (default 1800 seconds) makes it final.
+- `--grounded` refuses a root that is, is inside or is above the run folders or a memory folder, or that holds a link into them, a run-folder-shaped folder or a memory index within 3 levels; a clean root passes with that bound stated, and a link to an outside folder gives an "only partly checked" warning that says either that only the top level of that folder was read or that the folder could not be read.
+- The launch cap at a re-approval is the launches so far, plus 2 per pending row, plus 1 per running row (its first launch is already in the launches so far; the 1 is room for its one retry), plus 2 spare.
+- Reconcile finds the result file of a lettered row (for example `5a`) and prefers the file whose frontmatter names the attempt.
+- The presets tests make their own scratch home when run directly, instead of using the real one.
+- Merge and integration guidance (builder agent, orchestrator protocol, README) now says that a clean `git status` does not show skip-worktree or assume-unchanged files: list them with `git ls-files -v | grep '^[Sh]'`, and lift the agent-tools patch first when the branch changes one of them.
+
+### Fixed
+- The council's rulings check no longer refuses harmless text such as `risk-checks`, `motion.dev` or `socket.io`; a key at the start of a word or glued to an underscore (`token_sk-...`), and `.dev` or `.io` with a path or a subdomain, are still refused.
+- A Codex seat's error items are kept in that seat's detail line instead of being dropped.
+- The council preflight replaces line and paragraph separators and bidirectional control characters (including U+200E, U+200F and U+061C) with `?` in the names it prints, so a folder name cannot reorder or hide the text around it.
+- The council full-mode test guard now refuses an empty scratch folder instead of accepting any absolute path.
+- The progress report shows a row that was sent back to the same agent (`launch --continue`) as running, with its short name and activity, instead of under upcoming with "No active tasks".
+- The progress report no longer says a review row "needs your decision" while the fix round for its findings (`gaps_found` or `revise`) is running or has finished; that row waits as queued until it is re-reviewed. When the plan has no `Depends on` column the fix round may be for any row, and a fix that was closed as blocked or dropped does not count. A review that needs a person (`human_needed`) always keeps its line.
+- The council's check of a `--grounded` root against the run and memory folders also compares a spelling that differs only in letter case by asking the file system whether it is the same folder.
+- The scout agent's description no longer claims it reads memory first.
+
 ## 0.4.3 (2026-11-22)
 
 ### Fixed

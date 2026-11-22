@@ -171,7 +171,28 @@ def table_rows(cfg):
             ("signals", providers.signal_problems(cfg), "gate keys valid on [providers.*]"),
             ("routing", providers.routing_problems(cfg), "OpenRouter routing prefs valid")):
         rows.append(Check("engine", "engine", name, "FAIL" if probs else "PASS", "; ".join(probs) or ok))
+    rows += routing_pref_rows(cfg)
     return rows
+
+
+def routing_pref_rows(cfg):
+    """Informational only (PASS, never blocks): which OpenRouter seats run with a speed preference in force, a `sort` or a
+    throughput / latency threshold (from `[providers.openrouter.provider]` or the seat's `provider_prefs`). One row, seats
+    grouped by the preference they share; no row when no seat sets one. The values are shown as written: a bad value
+    already FAILs the `routing` row."""
+    by_pref = {}
+    for s in _roster(cfg) + [_chair_seat(cfg)]:
+        if s.get("provider") != "openrouter":
+            continue
+        prefs = providers.routing_prefs(cfg, s) or {}
+        shown = ", ".join("%s %s" % (k, prefs[k]) for k in ("sort",) + providers.ROUTING_THRESHOLDS if k in prefs)
+        if shown:
+            by_pref.setdefault(shown, []).append(str(s.get("id", "?")))
+    if not by_pref:
+        return []
+    return [Check("engine", "engine", "routing_pref", "PASS",
+                  "; ".join("seat%s %s: %s" % ("s" if len(ids) > 1 else "", ",".join(ids), shown)
+                            for shown, ids in by_pref.items()))]
 
 
 def quota_rows(cfg):
@@ -860,10 +881,15 @@ _R_EMAIL = (
     re.compile(r"\w[\w.+-]*@\s*\w[\w-]*(?:\s*\.\s*\w[\w-]*)*\s+\.\s*[A-Za-z]{2,}\b"),          # name@host . tld
     re.compile(r"\b\w+\s+at\s+\w[\w-]*\s+dot\s+[A-Za-z]{2,}\b", re.I),                          # name at host dot tld
 )
-_TLDS = ("com|net|org|io|dev|co|uk|de|fr|nl|eu|us|ca|au|app|ai|me|edu|gov|info|biz|xyz|site|tech|cloud|online|"
+_TLDS = ("com|net|org|co|uk|de|fr|nl|eu|us|ca|au|app|ai|me|edu|gov|info|biz|xyz|site|tech|cloud|online|"
          "page|gg|tv|fm|jp")                    # not sh, so, in, js, py, md: file names in a ruling stay clean
+_SOFT_TLDS = "io|dev"                           # library names too (motion.dev, socket.io): refused only as a URL, see below
 _R_URL = re.compile(r"(?<![\w@.-])(?:www\.[\w-]+(?:\.[\w-]+)+|(?:[a-z0-9][a-z0-9-]*\.)+(?:%s))(?![\w-])(?:/\S*)?"
                     % _TLDS, re.I)
+# .io and .dev: a bare single `name.tld` token passes; a path (x.dev/a) or a host with a subdomain (a.b.dev) is refused,
+# and a scheme or `www.` is caught above and by grounded._URL
+_R_URL_SOFT = re.compile(r"(?<![\w@.-])(?:(?:[a-z0-9][a-z0-9-]*\.)+(?:%s)(?![\w-])/\S*"
+                         r"|(?:[a-z0-9][a-z0-9-]*\.){2,}(?:%s)(?![\w-]))" % (_SOFT_TLDS, _SOFT_TLDS), re.I)
 _R_HOME = (
     re.compile(r"\$\{?HOME\}?(?![A-Za-z0-9_])|%(?:USERPROFILE|HOMEPATH|HOMEDRIVE)%|\$env:(?:USERPROFILE|HOME)\b", re.I),
     re.compile(r"(?:^|[\s\"'(=:`])(?:~[\w.-]*|/home|/root|/Users|/mnt/[a-z]/Users)(?:/|\\)"),       # anywhere in the line
@@ -873,7 +899,7 @@ _R_HOME = (
 _R_MEMORY = re.compile(r"\.claude[\\/]+projects[\\/]+[^\\/\s]+[\\/]+memory\b"
                        r"|(?:^|[\s\"'(=:`\\/])projects[\\/]+-[\w-]+[\\/]+memory\b")
 _R_KEY = (
-    _KEYISH,
+    re.compile(r"(?<![A-Za-z0-9])" + _KEYISH.pattern),   # not after a letter or digit: `risk-checks`, `ask-reviewer` are words, not keys; `token_sk-...` is one
     re.compile(r"\b(?:sk|pk|rk)[-_](?:live|test|proj|ant|or|v\d)[-_]\w[\w-]{8,}"),
     re.compile(r"\b(?:pplx|xai|gsk|hf|r8|npm|dsk|ak)[-_][A-Za-z0-9]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_\w{20,}|\bglpat-[\w-]{16,}"),
@@ -895,7 +921,8 @@ def rulings_hits(text):
     """-> [(line number, kind)] of what a scrubbed rulings excerpt must not hold: an email address (also written with
     (at)/[at] or spaced out, or split over a line break), a URL (with or without a scheme), a home path ($HOME,
     ${HOME}, %USERPROFILE%, ~, /home, /Users, C:\\Users), a Claude memory-folder path, a key-shaped string (sk-, pplx-,
-    ghp_, AIza, AKIA, xox, a JWT, a private key, Bearer, key = ...) or a phone number. Kinds only: never the matched
+    ghp_, AIza, AKIA, xox, a JWT, a private key, Bearer, or api_key / secret / token / password followed by : or =
+    and a value) or a phone number. Kinds only: never the matched
     text. A backstop: it never sees names, employers or figures; the excerpt the caller writes is the real guard."""
     hits = []
     lines = (text or "").splitlines()
@@ -905,7 +932,7 @@ def rulings_hits(text):
         if _EMAIL.search(line) or any(rx.search(line) for rx in _R_EMAIL) or \
                 (nxt.lstrip().startswith("@") and _EMAIL.search(joined)):
             hits.append((n, "email address"))
-        if grounded._URL.search(line) or _R_URL.search(line):
+        if grounded._URL.search(line) or _R_URL.search(line) or _R_URL_SOFT.search(line):
             hits.append((n, "URL"))
         if any(_HOME_PATH.match(p) for p in question_paths(line)) or any(rx.search(line) for rx in _R_HOME):
             hits.append((n, "path under a home directory"))
@@ -950,6 +977,229 @@ def private_rows(files, verb="run"):
             for f, why in private_hits(files)]
 
 
+# ---------------------------------------------------------------- risky grounded root (owner-approved 2026-11-21)
+# A grounded seat's file tools (and codex's sandbox) read whatever the root holds, so a root that holds orchestrator run
+# folders or Claude memory folders hands a seat whole rulings or memory files, which every other path in refuses. The
+# check runs once, in `council._load`, before anything is sent, and only with --grounded. It reads names only, never
+# file contents, and its findings are reported by kind and path relative to the root.
+RUN_SHAPE = ("manifest.jsonl", "DECISIONS.md")        # a run folder holds both (DECISIONS.md is a PRIVATE_FILES name)
+MEMORY_SHAPE = ("memory", "MEMORY.md")                # a folder named `memory` that holds MEMORY.md (a PRIVATE_FILES name)
+RISK_MAX_DEPTH, RISK_MAX_ENTRIES, RISK_SHOWN = 3, 2000, 3
+RISK_SKIP = (".git", "node_modules")
+GROUNDED_ROOT_OUTCOME = {"ask": "refuse", "run": "refuse", "preflight": "fail"}     # like PRIVATE_OUTCOME
+GROUNDED_ROOT_FIX = "name a narrower folder, or pass --allow-grounded-root if the seats may read what it holds"
+
+
+def _env_dir(env, key):
+    v = env.get(key)
+    return v if isinstance(v, str) and v else ""
+
+
+def private_targets(env=None):
+    """-> ([real runs dir], [real memory dirs]) that exist: the folders a seat must not read whole. Same resolution as
+    lib/paths.js: runs = $ORCH_RUNS_DIR, else <data dir>/runs (data dir = $ORCH_DIR, $BOSS_DATA, the legacy
+    <config dir>/orchestrator when its runs/ exists, else <config dir>/boss-data); memory = <projects dir>/*/memory
+    (projects dir = $ORCH_PROJECTS_DIR, else <config dir>/projects); config dir = $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    env = os.environ if env is None else env
+    cfgdir = _env_dir(env, "CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    data = _env_dir(env, "ORCH_DIR") or _env_dir(env, "BOSS_DATA")
+    if not data:
+        legacy = os.path.join(cfgdir, "orchestrator")
+        data = legacy if os.path.exists(os.path.join(legacy, "runs")) else os.path.join(cfgdir, "boss-data")
+    runs = _env_dir(env, "ORCH_RUNS_DIR") or os.path.join(data, "runs")
+    projects = _env_dir(env, "ORCH_PROJECTS_DIR") or os.path.join(cfgdir, "projects")
+    mems = []
+    try:
+        with os.scandir(projects) as it:
+            for e in it:
+                m = os.path.join(e.path, "memory")
+                if os.path.isdir(m):
+                    mems.append(os.path.realpath(m))
+    except OSError:
+        pass
+    runs = os.path.realpath(runs)
+    return ([runs] if os.path.isdir(runs) else []), sorted(set(mems))
+
+
+def _under(p, d):
+    """p is d or inside d (real paths). A spelling of p that differs from d only in letter case is not decided by the
+    string compare: the file system answers (os.path.samefile), see _same_ancestor."""
+    return p == d or p.startswith(d.rstrip(os.sep) + os.sep) or _same_ancestor(p, d)
+
+
+def _same_ancestor(p, d):
+    """True when p is d or inside d although the two are spelled with different letter case, and the first len(d)
+    components of p are the same folder as d (os.path.samefile). Paths that differ by more than case never reach the file system."""
+    dd = d.rstrip(os.sep)
+    if not dd or not (p.casefold() == dd.casefold() or p.casefold().startswith(dd.casefold() + os.sep)):
+        return False
+    head = os.sep.join(p.split(os.sep)[:len(dd.split(os.sep))])
+    try:
+        return os.path.samefile(head, dd)
+    except (OSError, ValueError):
+        return False
+
+
+def _shape(names, base):
+    """-> a short note when a folder named `base` that lists `names` has the run-folder or memory-folder shape."""
+    low = {n.casefold() for n in names}
+    if all(n.casefold() in low for n in RUN_SHAPE):
+        return "run folder", "holds %s and %s" % RUN_SHAPE
+    if base == MEMORY_SHAPE[0] and MEMORY_SHAPE[1].casefold() in low:
+        return "memory folder", "%s/%s" % MEMORY_SHAPE
+    return None
+
+
+def _clean(s):
+    """A name for printing: control characters, the Unicode line separators (U+2028, U+2029) and the bidi controls
+    (U+200E, U+200F, U+061C, U+202A-U+202E, U+2066-U+2069) become "?"."""
+    return re.sub(r"[^\x20-\x7e\u00a0-\uffff]|[\u2028\u2029\u200e\u200f\u061c\u202a-\u202e\u2066-\u2069]", "?", s)
+
+
+def root_risk(root, env=None, max_depth=RISK_MAX_DEPTH, max_entries=RISK_MAX_ENTRIES):
+    """-> {"findings": [(kind, path relative to the root, how)], "capped": bool, "read": entries read}. `root` is a real
+    path. Findings: the root is, is inside or holds a runs or memory folder; a symlink (resolved once, never followed
+    further) that resolves to, into or above one; a folder with the run-folder shape or a `memory` folder that holds
+    MEMORY.md, or that matches the Claude memory-folder path pattern (`private_dirs`). The walk is breadth first, folders
+    down to `max_depth` below the root are listed, at most `max_entries` entries are read in all, `.git` and
+    `node_modules` are not entered, a symlink is not descended, and a folder already reported is not walked. "links" =
+    the relative paths of symlinks that lead to a folder outside the root (not itself a finding) whose subfolders were
+    not read (only its own listing is, or it could not be listed); "unread" = those of them whose folder could not be
+    listed at all; "capped" is the entry cap only, the depth bound is not a cap."""
+    runs, mems = private_targets(env)
+    targets = [("run folder", t) for t in runs] + [("memory folder", t) for t in mems]
+    out = {"findings": [], "capped": False, "read": 0, "links": [], "unread": []}
+    found = out["findings"]
+    for kind, t in targets:
+        if _under(root, t):
+            found.append((kind, ".", "the root is it" if root == t else "the root is inside it"))
+        elif _under(t, root):
+            found.append((kind, os.path.relpath(t, root), "inside the root"))
+    if any(h[1] == "." for h in found):
+        return out                                      # nothing under the root is worth a walk
+    rx = _private_dirs()
+    queue, n = [(root, 0)], 0
+    while queue:
+        d, depth = queue.pop(0)
+        if n >= max_entries:
+            out["capped"] = True
+            break
+        if any(_under(d, t) for _, t in targets):       # a reported folder: its inside is not walked
+            continue
+        budget = max_entries - n
+        try:
+            with os.scandir(d) as it:
+                entries = []
+                for e in it:
+                    if len(entries) >= budget:
+                        out["capped"] = True
+                        break
+                    entries.append(e)
+        except OSError:
+            continue
+        n += len(entries)
+        rel = os.path.relpath(d, root)
+        hit = _shape([e.name for e in entries], os.path.basename(d))
+        if hit is None and any(r.search(d + "/") for r in rx):
+            hit = ("memory folder", "a Claude memory-folder path")
+        if hit:
+            found.append((hit[0], rel, hit[1]))
+            continue
+        for e in sorted(entries, key=lambda x: x.name):
+            if e.name in RISK_SKIP:
+                continue
+            try:
+                if e.is_symlink():
+                    res = os.path.realpath(e.path)
+                    why = next((k for k, t in targets if _under(res, t) or _under(t, res)), None)
+                    if why is None and not _under(res, root) and os.path.isdir(res):
+                        left = max_entries - n
+                        subdirs = unread = False
+                        try:
+                            with os.scandir(res) as it:
+                                names = []
+                                for x in it:
+                                    if len(names) >= left:
+                                        out["capped"] = True
+                                        break
+                                    names.append(x.name)
+                                    try:
+                                        subdirs = subdirs or (x.name not in RISK_SKIP and x.is_dir())
+                                    except OSError:
+                                        pass
+                        except OSError:
+                            names, unread = [], True         # the folder was not read at all: the WARN names the link
+                        n += len(names)
+                        sh = _shape(names, os.path.basename(res))
+                        why = sh[0] if sh else None
+                        if why is None and (subdirs or unread):
+                            out["links"].append(os.path.relpath(e.path, root))
+                            if unread:
+                                out["unread"].append(os.path.relpath(e.path, root))
+                    if why and not _under(res, root):
+                        found.append((why, os.path.relpath(e.path, root), "symlink -> outside the root"))
+                elif e.is_dir(follow_symlinks=False) and depth < max_depth:
+                    queue.append((e.path, depth + 1))
+            except OSError:
+                continue
+    out["read"] = n
+    return out
+
+
+def _risk_text(risk):
+    f = risk["findings"]
+    parts = []
+    for kind, rel, how in f[:RISK_SHOWN]:
+        parts.append("%s: %s -> outside the root" % (kind, _clean(rel)) if how.startswith("symlink")
+                     else "%s: %s (%s)" % (kind, _clean(rel), how))
+    if len(f) > RISK_SHOWN:
+        parts.append("and %d more" % (len(f) - RISK_SHOWN))
+    return "; ".join(parts)
+
+
+def grounded_root_refusal(cfg, verb):
+    """-> the refusal message when GROUNDED_ROOT_OUTCOME[verb] is "refuse", the --grounded root is risky and
+    --allow-grounded-root is not set, else None. The caller exits 2 with it before anything is sent."""
+    risk = (cfg or {}).get("_grounded_risk")
+    if GROUNDED_ROOT_OUTCOME.get(verb) != "refuse" or not risk or not risk["findings"] or risk.get("allowed"):
+        return None
+    return ("%s refused, nothing sent: the --grounded root holds what a seat's file tools could read whole (%s). Fix: %s."
+            % (verb, _risk_text(risk), GROUNDED_ROOT_FIX))
+
+
+def grounded_risk_rows(cfg):
+    """`policy` row `grounded_risk` for a --grounded run (none without it): FAIL for a risky root (preflight; `ask` and
+    `run` stopped earlier), WARN with --allow-grounded-root, WARN when the walk hit its entry cap, or followed a
+    symlink to a folder outside the root whose subfolders it did not read, and found nothing, PASS (hidden in the short
+    table) for a clean root, its text stating the depth bound."""
+    risk = (cfg or {}).get("_grounded_risk")
+    if not risk:
+        return []
+    if risk["findings"]:
+        if risk.get("allowed"):
+            return [Check("policy", "policy", "grounded_risk", "WARN",
+                          "--allow-grounded-root: the seats can read what the root holds: %s" % _risk_text(risk))]
+        return [Check("policy", "policy", "grounded_risk", "FAIL",
+                      "the --grounded root holds what a seat's file tools could read whole: %s. Fix: %s"
+                      % (_risk_text(risk), GROUNDED_ROOT_FIX))]
+    links = risk.get("links") or []
+    if risk["capped"] or links:
+        why = []
+        if risk["capped"]:
+            why.append("stopped after %d entries, %d levels deep" % (RISK_MAX_ENTRIES, RISK_MAX_DEPTH))
+        unread = [x for x in links if x in (risk.get("unread") or ())]
+        for group, text in (([x for x in links if x not in unread],
+                             "only the top level was read of the folder outside the root that a symlink leads to"),
+                            (unread, "the folder outside the root that a symlink leads to could not be read")):
+            if group:
+                more = "; and %d more" % (len(group) - RISK_SHOWN) if len(group) > RISK_SHOWN else ""
+                why.append("%s: %s%s" % (text, ", ".join(_clean(x) for x in group[:RISK_SHOWN]), more))
+        return [Check("policy", "policy", "grounded_risk", "WARN",
+                      "the root was only partly checked for run or memory folders (%s)" % "; ".join(why))]
+    return [Check("policy", "policy", "grounded_risk", "PASS",
+                  "none found within %d levels of the root (%d entries read)" % (RISK_MAX_DEPTH, risk["read"]))]
+
+
 def run(cfg, allow_missing=(), free_only=False, question=None, context_files=(), allow_paths=False, verb="run"):
     """-> (ok, checks). Raises PolicyError before any adapter is touched. With `question`, the question path lint
     row comes first (fallback-chain row 2). A `--rulings-file` (cfg `_rulings`) counts as attached for that lint."""
@@ -962,6 +1212,7 @@ def run(cfg, allow_missing=(), free_only=False, question=None, context_files=(),
     checks += question_rows(question, files, allow_paths, root=((cfg or {}).get("_grounded") or {}).get("root"))
     checks += private_rows(files, verb)
     checks += grounded_rows(cfg)
+    checks += grounded_risk_rows(cfg)
     checks += depth_rows(cfg)
     checks += engine_stage(cfg)
     checks += orphan_rows(cfg)

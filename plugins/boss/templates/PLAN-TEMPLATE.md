@@ -8,7 +8,7 @@ mode: <B|C>     # planning mode (PROTOCOL.md "Planning modes"): A try first (no 
 mode_reason: <one line: how much is unknown, and why this depth>
 repo: <repo name or path>     # ledger filter
 area: <area within the repo>     # ledger filter
-launch_total: <2 x rows + 2>     # D9: approval sets wfp maxLaunches = launches so far + 2 x rows still pending + 2
+launch_total: <2 x rows + 2>     # D9: approval sets wfp maxLaunches = launches so far + 2 per pending row + 1 per running row + 2
 ---
 
 <!-- orch-planner: copy to <run>/PLAN.md and fill every <placeholder>. Comments are instructions; delete them once filled. -->
@@ -77,8 +77,8 @@ your own numbers from `node "$BOSS_LIB/ledger.js" show` (same repo/area) when th
   worktree row's pack names its base SHA and worktree path.
 - Launch total: `2 x rows + 2`, the first try and the one step-up the retry rules allow on every row, plus 2 spare.
   Approving the plan approves its waves, including any wave of more than 2 agents. On approval, run
-  `node "$BOSS_LIB/../wfp/wfp.js" set maxLaunches=<launches so far + 2 x rows still pending + 2> --sid=$WFP_SID` (read
-  launches so far from `wfp.js status --sid=$WFP_SID`). An approved plan patch adds 2 per new row in the same answer.
+  `node "$BOSS_LIB/../wfp/wfp.js" set maxLaunches=<launches so far + 2 per pending row + 1 per running row + 2> --sid=$WFP_SID` (read
+  launches so far from `wfp.js status --sid=$WFP_SID`; a row with Status `pending` counts 2; a `running` row has used its first launch and still owns one step-up, so it counts 1; the 2 spare stay spare). An approved plan patch adds 2 per new row in the same answer.
   The launch cap and main-only never give way on retries; only the owner lifts them, apart from the cap widenings in
   PROTOCOL.md "Dispatch loop" steps 1 and 9.
 - One commit per mutation row in a git repo: path-scoped, with the `Orch-Attempt:` trailer. Otherwise the result says
@@ -125,7 +125,7 @@ Plan check: <pending | passed, round N | patched, round 1 (mode B) | skipped (mo
 (description `[<model>/<effort>] <attempt-id> <subtask>`, brief line `Orch-Attempt: <attempt-id>`); never launch one
 without it. Its ledger line comes from its completion notice; close each attempt with
 `node "$BOSS_LIB/ledger.js" close --attempt <attempt-id> --first-pass y|n --outcome accepted|retry|blocked|dropped [--cause …]`
-(`--cause` required with n or retry; the old `ledger.js update` form is still accepted). Only Codex, Workflow and
+(`--cause` required with n or retry; the old `ledger.js update` form is still accepted; `--plan-status "<text>" [--plan-result "<text>"]` and `--decision "<text>"` also write this table's row and DECISIONS.md). Only Codex, Workflow and
 background-Bash rows keep a manual `ledger.js add`; reconcile reports them `legacy`. Update this table after each
 completion notice. -->
 
@@ -135,7 +135,7 @@ After /clear: `/boss:resume <run name>` (reads `<run>/HANDOFF.md` first; pass th
 Here `<run name>` is the frontmatter `run:`, the bare folder name; every `--run` takes it, never the folder path.
 1. Read the frontmatter and Status. `done` rows stay done. If the session's preset differs from `preset`, run
    `node "$BOSS_LIB/../wfp/wfp.js" profile <preset> --sid=$WFP_SID`. Re-check `maxLaunches` against launches so far +
-   2 x rows still pending + 2.
+   2 per pending row + 1 per running row + 2.
 2. Run `node "$BOSS_LIB/manifest.js" activity --run <run name> --sid=$WFP_SID`; on `state: recent` ask the owner
    (wait and recheck, or take over) before going on. Then run `node "$BOSS_LIB/manifest.js" lease check --run <run name> --sid=$WFP_SID`;
    on `mine`, `none` or `expired`, run `manifest.js lease acquire --run <run name> --sid=$WFP_SID` (`other`: another live

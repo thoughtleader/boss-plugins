@@ -67,7 +67,7 @@ you find a defect)" heading, for every seat and the chair; it is refused (exit 2
 an email address, a URL, a home-dir or memory-folder path, a key-shaped string or a phone number. `ask` refuses a whole
 DECISIONS.md / MEMORY.md / Claude memory-folder file as --context-file or --rulings-file, exit 2: by name always; a
 renamed copy only in part, when its content still has that file's shape (a copy with a line put in front, a short one,
-or a memory note without frontmatter passes), so never pass a copy, write an excerpt; so does `run`, and `preflight`
+or a memory note without frontmatter can pass), so never pass a copy, write an excerpt; so does `run`, and `preflight`
 shows a FAIL row for it (exit 1): every form refuses a whole rulings or memory file (preflight.PRIVATE_OUTCOME; no
 override flag). Limits: these checks are a backstop; they never see names, employers or figures. The excerpt the caller
 writes is the real guard.
@@ -133,6 +133,9 @@ def _parser():
                             "text-only, labelled ungrounded")
         p.add_argument("--attach", action="append", default=[], metavar="IMAGE",
                        help="an image file (png, jpg, gif, webp) the grounded seats can open (repeatable; needs --grounded)")
+        p.add_argument("--allow-grounded-root", action="store_true",
+                       help="with --grounded: go on although the root holds run folders or Claude memory folders a seat could "
+                            "read whole (the refusal becomes a WARN row naming what was found)")
         p.add_argument("--allow-paths", action="store_true",
                        help="paths named in the question that are not --context-file are WARN, not FAIL")
         p.add_argument("--rulings-file", metavar="F",
@@ -179,9 +182,11 @@ def _load(args):
             if unknown:
                 return None, "--lens: no such seat: %s (roster: %s)" % (", ".join(unknown), ", ".join(sorted(map(str, ids))))
             cfg["_lens_overrides"] = over
-        if getattr(args, "grounded", None) is not None or getattr(args, "attach", None):
+        if getattr(args, "grounded", None) is not None or getattr(args, "attach", None) \
+                or getattr(args, "allow_grounded_root", False):
             if getattr(args, "grounded", None) is None:
-                return None, "--attach needs --grounded (only grounded seats can open files)"
+                return None, "%s needs --grounded (only grounded seats can open files)" % (
+                    "--attach" if getattr(args, "attach", None) else "--allow-grounded-root")
             if not grounded.cfg_of(cfg)["enabled"]:
                 return None, "--grounded: disabled by [grounded] enabled = false"
             root, gerr = grounded.resolve_root(args.grounded, cfg)
@@ -191,6 +196,9 @@ def _load(args):
             if gerr:
                 return None, gerr
             cfg["_grounded"] = {"root": root, "images": images}      # runtime key: underscore, skipped by drift
+            risk = preflight.root_risk(root)                          # names only, bounded; before anything is sent
+            risk["allowed"] = bool(getattr(args, "allow_grounded_root", False))
+            cfg["_grounded_risk"] = risk
         if getattr(args, "rulings_file", None):
             rulings, rerr = _rulings(args.rulings_file)
             if rerr:
@@ -281,6 +289,14 @@ def _private_refused(args, verb):
     return bool(msg)
 
 
+def _grounded_root_refused(cfg, verb):
+    """True (message written) when the verb refuses a --grounded root that holds run or memory folders."""
+    msg = preflight.grounded_root_refusal(cfg, verb)
+    if msg:
+        sys.stderr.write(msg + "\n")
+    return bool(msg)
+
+
 def _context_missing(paths):
     for p in paths:
         if not os.path.isfile(p):
@@ -331,7 +347,8 @@ def cmd_run(args):
     if not question.strip():
         sys.stderr.write('no question: pass --question-file F or -- "<question>"\n')
         return 2
-    if _context_missing(args.context_file) or _private_refused(args, "run"):
+    if _context_missing(args.context_file) or _private_refused(args, "run") \
+            or _grounded_root_refused(cfg, "run"):
         return 2
     # live status: the run dir exists before the preflight, so status.json / current.json show phase `preflight` (canaries
     # take a while); a policy failure removes it again, as if it had never been made
@@ -414,7 +431,7 @@ a whole rulings/memory file), 3 quorum not met, 4 the chair failed or `pending: 
 
 Refused before anything is sent (exit 2): a --context-file or --rulings-file that is %s, by name always, a renamed
 copy only in part, when its content still has that file's shape (a copy with a line put in front, a short one, or a
-memory note without frontmatter passes): never pass a copy (fix: %s); a --rulings-file with an email address (also
+memory note without frontmatter can pass): never pass a copy (fix: %s); a --rulings-file with an email address (also
 (at) or spaced out), a URL (also without a scheme), a home-dir or memory-folder path, a key-shaped string or a phone
 number (the error names line numbers and kinds, never the text). An ordinary --context-file may hold an email address (author lines): only the rulings file is strict. No
 override flag. A backstop only: it never sees names, employers or figures; the excerpt you write is the real guard.
@@ -426,6 +443,8 @@ Flags used only sometimes:
   --grounded [DIR]   claude (Read/Grep/Glob) and codex (-s read-only) seats read DIR (default: the cwd's git root) and
                      cite path:line with a quote, checked against the files; other seats stay text only (ungrounded).
                      A path inside DIR needs no --context-file for grounded seats (question_path WARN).
+                     A DIR that holds run folders or Claude memory folders is refused (exit 2; preflight: FAIL row).
+  --allow-grounded-root   with --grounded: go on anyway; the refusal becomes a WARN row naming what was found.
   --attach IMAGE     png/jpg/gif/webp the grounded seats may open (needs --grounded).
   --allow-missing PROV   run without PROV's seats if PROV fails the preflight (only the user may ask for it).
   --allow-paths      a path in the question that is only illustrative: its question_path row is WARN, not FAIL.
@@ -452,7 +471,7 @@ def cmd_ask(args):
         return 2
     if _context_missing(args.context_file):
         return 2
-    if _private_refused(args, "ask"):
+    if _private_refused(args, "ask") or _grounded_root_refused(cfg, "ask"):
         return 2
     problem = _out_problem(cfg, args)               # before the paid canaries, not after them
     if problem:

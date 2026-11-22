@@ -408,10 +408,28 @@ class Backstop(Base):
         for text in MUST_NOT_HIT:
             self.assertEqual(preflight.rulings_hits(text), [], text)
 
+    def test_32b_rulings_key_and_url_detectors_pass_plain_words_and_library_names(self):
+        """Item 34: `risk-checks` and `ask-reviewer` hit on `sk-` (no word boundary) and `motion.dev` / `socket.io` hit on
+        the TLD list. Only the rulings detectors changed; what is refused otherwise stays refused."""
+        for text in ("risk-checks", "ask-reviewer", "Run the risk-checks and the ask-reviewer step first.",
+                     "motion.dev", "socket.io", "Use motion.dev and socket.io for the demo.", "Ends with socket.io.",
+                     _j("a1sk", "-", "Q7x" * 4), _j("task", "-", "Q7x" * 4)):            # after a digit or a letter: a word, not a key
+            self.assertEqual(preflight.rulings_hits(text), [], text)
+        for kind, text in (("key-shaped string", _j("sk", "-", "Q7x" * 4)),
+                           ("key-shaped string", _j("Use sk", "-", "Q7x" * 4, " here")),
+                           ("key-shaped string", _j("the-sk", "-", "Q7x" * 4)),         # a word start after a hyphen
+                           ("key-shaped string", _j("token_sk", "-", "Q7x" * 4)),        # glued to an underscore: not after a letter or digit
+                           ("key-shaped string", _j("API_KEY=_sk", "-", "Q7x" * 4)),
+                           ("URL", _j("https", "://x.", "dev/a")), ("URL", _j("https", "://x.", "io")), ("URL", "www.x.io"), ("URL", "www.x.dev"),   # joined at run time: CI scans the repo for URLs
+                           ("URL", "x.dev/path"), ("URL", "see socket.io/docs"), ("URL", "docs.motion.dev"),
+                           ("URL", "x.com"), ("URL", "see example.org"), ("URL", "x.com/path")):
+            self.assertIn(kind, [h[1] for h in preflight.rulings_hits(text)], text)
+
     def test_33_table_scrub_and_drift_keep_the_narrow_key_shape(self):
         from councillib import drift
-        self.assertEqual(preflight._KEYISH.pattern, r"sk-[A-Za-z0-9_\-]{6,}")
+        self.assertEqual(preflight._KEYISH.pattern, r"sk-[A-Za-z0-9_\-]{6,}")     # the shared scrub: no word boundary, on purpose
         self.assertEqual(drift._KEYISH.pattern, r"sk-[A-Za-z0-9_\-]{6,}")
+        self.assertNotIn(preflight._KEYISH, preflight._R_KEY)                       # the rulings detector has its own copy
         self.assertEqual(preflight._scrub(_j("pplx", "-", "abcdef1234567890abcdef12")), _j("pplx", "-", "abcdef1234567890abcdef12"))
 
     def test_34_outcome_is_one_table(self):

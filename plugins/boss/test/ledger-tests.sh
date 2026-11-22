@@ -245,13 +245,43 @@ R=t-lch; mkdir -p "$ORCH_RUNS_DIR/$R"; LB --run $R --row 1 --model opus --effort
 notice alch tu-lch "[auto] $R#1.1 no label" 50 1 10 | I >/dev/null
 ok "no meta.json, no label: the launch's model/effort" "$(jq -r '"\(.model)/\(.effort)"' "$(F $R)")" "opus/high"
 
-echo "== ingest: waiting -> finished, resume pair, killed"
+echo "== ingest: interim waiting notice is provisional (item 14), then finished; resume pair; killed"
 R=t-wait; mkdir -p "$ORCH_RUNS_DIR/$R"; LB --run $R --row 1 --model sonnet --effort high >/dev/null
 o=$(notice awt tu-wt "[sonnet/high] $R#1.1 w" 100 3 100 completed "is waiting on its own background work" | I)
-ok "waiting-only notice (completed): the idle stop is final enough for a ledger line" "$o|$(wc -l < "$(F $R)" | tr -d ' ')|$(jq -c '[.tokens,.tools,.ms]' "$(F $R)")" "$R#1.1: stop new, ledger written|1|[100,3,100]"
-ok "the stored waiting stop keeps final:false" "$(jq -r 'select(.type=="stop")|"\(.phase) \(.final)"' "$(MF $R)")" "waiting false"
+ok "waiting-only notice (completed): stop recorded, no ledger line (provisional, not final)" "$o|$([ -e "$(F $R)" ] && echo present || echo none)" "$R#1.1: stop new, ledger none:no-final-stop|none"
+ok "the stored waiting stop keeps final:false, is marked provisional and keeps its figures" "$(jq -r 'select(.type=="stop")|"\(.phase) \(.final) \(.provisional) \(.tokens) \(.tools) \(.ms)"' "$(MF $R)")" "waiting false true 100 3 100"
 o=$(notice awt tu-wt "[sonnet/high] $R#1.1 w" 200 7 500 | I)
-ok "waiting -> finished: the same line is updated, not duplicated" "$o|$(wc -l < "$(F $R)" | tr -d ' ')|$(jq -c '[.tokens,.tools,.ms]' "$(F $R)")" "$R#1.1: stop new, ledger updated|1|[200,7,500]"
+ok "waiting -> finished: the line is written once, with the final figures" "$o|$(wc -l < "$(F $R)" | tr -d ' ')|$(jq -c '[.tokens,.tools,.ms]' "$(F $R)")" "$R#1.1: stop new, ledger written|1|[200,7,500]"
+ok "waiting -> finished: no promoted marker; the final stop is not marked provisional" "$(jq -r '[.promoted]|tostring' "$(F $R)")|$(jq -r 'select(.type=="stop" and .phase=="finished")|[.provisional,.promoted]|tostring' "$(MF $R)")" "[null]|[null,null]"
+ok "waiting -> finished: cost counts the attempt once (tokens 200)" "$(node "$L" cost --run $R | head -1)" "cost: run $R: 1 rows, 1 attempts, tokens 200, tools 7, time 1s"
+R2=t-wait2; mkdir -p "$ORCH_RUNS_DIR/$R2"; LB --run $R2 --row 1 --model sonnet --effort high >/dev/null
+n=$(notice awu tu-wu "[sonnet/high] $R2#1.1 w" 50 1 10 completed "is waiting on its own background work"); echo "$n" | I >/dev/null
+ok "a repeated interim notice is a dup and still writes no line" "$(echo "$n" | I)|$([ -e "$(F $R2)" ] && echo present || echo none)" "$R2#1.1: stop dup, ledger none:no-final-stop|none"
+R=t-wait-close; mkdir -p "$ORCH_RUNS_DIR/$R"; LB --run $R --row 1 --model sonnet --effort high >/dev/null
+notice acl tu-cl "[sonnet/high] $R#1.1 w" 120 4 900 completed "is waiting on its own background work" | I >/dev/null
+o=$(node "$L" close --attempt $R#1.1 --first-pass y --outcome accepted 2>&1)
+ok "close on a provisional-only attempt: promotes the notice, writes the line, then closes" "$(echo "$o" | sed 's/ [0-9T:.Z-]*Z$//' | cut -c1-120 | sed -n 1p)" "ledger: $R#1.1: interim waiting notice promoted to final by close (ledger line written)"
+ok "close: the line's ts is the waiting notice's ts and promoted_at is the promoted stop's own ts" "$(jq -r '[.ts,.promoted_at]|join(" ")' "$(F $R)")" "$(jq -r 'select(.type=="stop" and .provisional==true)|.ts' "$(MF $R)") $(jq -r 'select(.type=="stop" and .final==true)|.ts' "$(MF $R)")"
+ok "close: the ledger line carries the figures, promoted=close and the outcome" "$(jq -c '[.tokens,.tools,.ms,.promoted,.outcome,.firstPass]' "$(F $R)")" '[120,4,900,"close","accepted",true]'
+ok "close: a promoted final stop (phase finished, final true, promoted close, from the interim event) and an outcome event" "$(jq -r 'select(.type=="stop" and .final==true)|[.phase,.status,.promoted,(.promoted_from|startswith("'$R'#e")),.tokens]|tostring' "$(MF $R)")|$(jq -r 'select(.type=="outcome")|.via' "$(MF $R)")" '["finished","completed","close",true,120]|close'
+ok "close twice: the second is a plain close (nothing to promote), still one ledger line and one promoted stop" "$(node "$L" close --attempt $R#1.1 --first-pass y --outcome accepted 2>&1 | grep -c promoted)|$(wc -l < "$(F $R)" | tr -d ' ')|$(jq -c 'select(.type=="stop" and .promoted!=null)' "$(MF $R)" | wc -l | tr -d ' ')" "0|1|1"
+R=t-wait-legacy; mkdir -p "$ORCH_RUNS_DIR/$R"; LB --run $R --row 1 --model sonnet --effort high >/dev/null
+E --run $R --type stop --json '{"attempt":"'$R'#1.1","task_id":"awl","tool_use_id":"tu-wl","status":"completed","phase":"waiting","tokens":100,"tools":3,"ms":100,"model":"sonnet","effort":"high","agent":"orch-builder"}'
+o=$(notice awl tu-wl "[sonnet/high] $R#1.1 w" 100 3 100 completed "is waiting on its own background work" | I)
+ok "an old waiting stop (no provisional marker): the ledger line's ts is the stop's own ts, as before" "$(jq -r .ts "$(F $R)")" "$(jq -r 'select(.type=="stop")|.ts' "$(MF $R)")"
+ok "an old waiting stop (no provisional marker) still counts as final: the ledger line is written as before" "$o|$(jq -c '[.tokens,.tools,.ms,.promoted]' "$(F $R)")" "$R#1.1: stop dup, ledger written|[100,3,100,null]"
+R=t-wait-promote; mkdir -p "$ORCH_RUNS_DIR/$R"; LB --run $R --row 1 --model sonnet --effort high >/dev/null
+E --run $R --type stop --json '{"attempt":"'$R'#1.1","task_id":"awp","tool_use_id":"tu-wp","status":"completed","phase":"waiting","provisional":true,"ts":"'$(date -u -d '-40 min' +%Y-%m-%dT%H:%M:%S.000Z)'","tokens":80,"tools":2,"ms":50,"model":"sonnet","effort":"high","agent":"orch-builder"}'
+ok "promote: an interim notice younger than --min-age-sec stays provisional" "$(node "$L" promote --attempt $R#1.1 --by waiting-timeout --min-age-sec 7200)" "$R#1.1: not promoted (too-young)"
+ok "promote: an older one is promoted by waiting-timeout and the line is written" "$(node "$L" promote --attempt $R#1.1 --by waiting-timeout --min-age-sec 1800 | sed 's/, interim notice.*//')|$(jq -c '[.tokens,.promoted]' "$(F $R)")" "$R#1.1: promoted (waiting-timeout), ledger line written|[80,\"waiting-timeout\"]"
+W=$(jq -r 'select(.type=="stop" and .provisional==true)|.ts' "$(MF $R)")
+ok "promote: the promoted stop's ended_at is the waiting notice's ts, its own ts is the later promotion time, and the ledger line's ts is the notice's" "$(jq -r 'select(.type=="stop" and .final==true)|[(.ended_at=="'$W'"),(.ts>"'$W'"),(.ts!=.ended_at),.ms,.tokens]|tostring' "$(MF $R)")|$(jq -r .ts "$(F $R)")" "[true,true,true,50,80]|$W"
+ok "promote: the ledger line keeps the promotion time in promoted_at (the promoted stop's ts, after the notice's)" "$(jq -r '[.promoted,(.promoted_at>"'$W'")]|tostring' "$(F $R)")|$(jq -r .promoted_at "$(F $R)")" "[\"waiting-timeout\",true]|$(jq -r 'select(.type=="stop" and .final==true)|.ts' "$(MF $R)")"
+ok "promote: a repeat is a no-op (dup)" "$(node "$L" promote --attempt $R#1.1 --by waiting-timeout)" "$R#1.1: not promoted (has-final)"
+notice awp tu-wp "[sonnet/high] $R#1.1 w" 90 5 70 | I >/dev/null
+ok "a true final notice after a promotion replaces the figures and drops the marker, one line" "$(jq -c '[.tokens,.tools,.ms,.promoted]' "$(F $R)")|$(wc -l < "$(F $R)" | tr -d ' ')" "[90,5,70,null]|1"
+ok "a true final after a promotion keeps the line's ts (the waiting notice's) and drops promoted and promoted_at" "$(jq -r .ts "$(F $R)")|$(jq -c '[.promoted,.promoted_at]' "$(F $R)")" "$W|[null,null]"
+ok "promote: needs --by" "$(rc node "$L" promote --attempt $R#1.1)" "2"
 R=t-waitrun; mkdir -p "$ORCH_RUNS_DIR/$R"; LB --run $R --row 1 --model sonnet --effort high >/dev/null
 notice awr tu-wr "[sonnet/high] $R#1.1 w" 100 3 100 failed "is waiting on its own background work" | I >/dev/null
 ok "a waiting notice whose status is not completed writes no line" "$([ -e "$(F $R)" ] && echo present || echo none)" "none"
@@ -723,6 +753,119 @@ ok "replay: the predecessor's own line is shown" "$(grep -c "manifest: $R#1.1: s
 ok "replay: other runs' lines are not shown, one count says so" "$(grep -c 'other-run' "$T/rp.err")|$(grep -c 'other notice line(s) not shown (--verbose lists them)' "$T/rp.err")" "0|1"
 node "$M" launch --run $R --row 1 --role implementation --agent orch-builder --mode subagent --repo r --area a --model sonnet --effort high --continue "$R#1.1" --cause failed --verbose >"$T/rp.out" 2>"$T/rp.err"
 ok "replay: --verbose lists every line" "$(grep -c 'other-run#7.1\|other-run#8.1' "$T/rp.err")" "2"
+
+echo "== close --plan-status / --plan-result / --decision (re-check item 7): opt-in edits of PLAN.md's Status table and DECISIONS.md"
+PSM="$CL/lib/plan-status.js"
+PLAN_HEAD='# Plan
+
+Some prose with a | pipe, outside the table.
+
+## Status
+
+| # | Status | Ran on (model/effort) | Attempt | SHA / result | First-pass review | Retries | Escalated |
+|---|---|---|---|---|---|---|---|'
+mkrun(){ # mkrun <run> <rows...>: a scratch run with a launch + ledger line per row, a PLAN.md (rows pending) and a DECISIONS.md
+  local r=$1 x; shift; mkdir -p "$ORCH_RUNS_DIR/$r"
+  { echo "$PLAN_HEAD"; for x in "$@"; do echo "| $x | pending | | | | | 0 | n |"; done; printf '\n## Notes\n\n| a | b |\n|---|---|\n| 1 | 2 |\n'; } > "$ORCH_RUNS_DIR/$r/PLAN.md"
+  printf '# Decisions: %s\n- 2026-11-21 18:00 PST · first line\n' "$r" > "$ORCH_RUNS_DIR/$r/DECISIONS.md"
+  for x in "$@"; do LB --run $r --row $x --model sonnet --effort high >/dev/null; CA --run $r --row $x --attempt "$r#$x.1" --model sonnet --effort high --tokens 1 --tools 1 --ms 1; done
+}
+PF(){ echo "$ORCH_RUNS_DIR/$1/PLAN.md"; }; DF(){ echo "$ORCH_RUNS_DIR/$1/DECISIONS.md"; }
+sedi(){ sed "$1" "$2" > "$2.sedi" && mv "$2.sedi" "$2"; }   # in-place edit without sed -i (its argument differs on BSD/macOS)
+rowln(){ grep -E "^\| $2 \|" "$(PF $1)"; }
+chg(){ diff "$1" "$2" | grep -c '^[<>]'; }   # changed lines between two copies (a changed line counts 2: its old and its new form)
+tmps(){ find "$ORCH_RUNS_DIR/$1" -name '*.tmp' | wc -l | tr -d ' '; }
+
+R=t-ps1; mkrun $R 5 5a
+cp "$(PF $R)" "$T/ps1.plan"; cp "$(DF $R)" "$T/ps1.dec"
+o=$(node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted 2>&1); st=$?
+ok "no flags: the close is as before (exit 0, one 'closed' line, outcome set)" "$st|$(echo "$o" | wc -l | tr -d ' ')|$(jq -r 'select(.id=="'$R'#5a.1")|.outcome' "$(F $R)")" "0|1|accepted"
+ok "no flags: PLAN.md and DECISIONS.md are byte for byte unchanged; no temp file left" "$(cmp -s "$T/ps1.plan" "$(PF $R)" && cmp -s "$T/ps1.dec" "$(DF $R)" && echo same)|$(tmps $R)" "same|0"
+
+R=t-ps2; mkrun $R 5 5a; cp "$(PF $R)" "$T/ps2.plan"; cp "$(DF $R)" "$T/ps2.dec"
+o=$(node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted --plan-status "done (18:39 PST: one commit)" 2>&1); st=$?
+ok "--plan-status alone: exit 0, the ledger is closed" "$st|$(jq -r 'select(.id=="'$R'#5a.1")|.outcome' "$(F $R)")" "0|accepted"
+ok "--plan-status alone: the row's five cells are set, SHA / result, Retries and Escalated left as they were" "$(rowln $R 5a)" "| 5a | done (18:39 PST: one commit) | sonnet/high | $R#5a.1 | | y | 0 | n |"
+ok "--plan-status alone: only that one line changed (old + new = 2); the plain row 5 line, the prose and the second table are as they were" "$(chg "$T/ps2.plan" "$(PF $R)")|$(rowln $R 5)" "2|| 5 | pending | | | | | 0 | n |"
+ok "--plan-status alone: DECISIONS.md untouched" "$(cmp -s "$T/ps2.dec" "$(DF $R)" && echo same)|$(tmps $R)" "same|0"
+
+R=t-ps3; mkrun $R 5 5a; cp "$(PF $R)" "$T/ps3.plan"
+node "$L" close --attempt $R#5a.1 --first-pass n --outcome retry --cause failed --retries 1 --escalated y --plan-status "retry" --plan-result "abc1234; 5a-x.md" >/dev/null 2>&1
+ok "--plan-result, --retries, --escalated and first-pass n: those cells too" "$(rowln $R 5a)" "| 5a | retry | sonnet/high | $R#5a.1 | abc1234; 5a-x.md | n | 1 | y |"
+ok "...and still one changed line, the ledger line has retries 1 / escalated true" "$(chg "$T/ps3.plan" "$(PF $R)")|$(jq -c 'select(.id=="'$R'#5a.1")|[.retries,.escalated,.firstPass,.outcome]' "$(F $R)")" '2|[1,true,false,"retry"]'
+
+R=t-ps4; mkrun $R 5 5a; cp "$(PF $R)" "$T/ps4.plan"; cp "$(DF $R)" "$T/ps4.dec"
+o=$(node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted --decision "Row 5a accepted; next 5b" 2>&1); st=$?
+ok "--decision alone: exit 0, PLAN.md untouched, the old DECISIONS.md is a byte prefix of the new" "$st|$(cmp -s "$T/ps4.plan" "$(PF $R)" && echo same)|$(head -c "$(wc -c < "$T/ps4.dec")" "$(DF $R)" | cmp -s - "$T/ps4.dec" && echo prefix)" "0|same|prefix"
+ok "--decision alone: exactly one line appended, in the standing form (local time, zone short name)" "$(( $(wc -l < "$(DF $R)") - $(wc -l < "$T/ps4.dec") ))|$(tail -1 "$(DF $R)" | grep -cE '^- [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} [A-Za-z0-9+:-]+ · Row 5a accepted; next 5b$')" "1|1"
+ok "--decision: the stamp is the local time of now (date part)" "$(tail -1 "$(DF $R)" | cut -c3-12)" "$(date +%Y-%m-%d)"
+
+R=t-ps5; mkrun $R 5 5a; cp "$(PF $R)" "$T/ps5.plan"; cp "$(DF $R)" "$T/ps5.dec"
+node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted --plan-status "done" --plan-result "f2ca478" --decision "both" >/dev/null 2>&1
+ok "both flags: the row line and one DECISIONS line, nothing else" "$(rowln $R 5a)|$(chg "$T/ps5.plan" "$(PF $R)")|$(tail -1 "$(DF $R)" | grep -c ' · both$')|$(( $(wc -l < "$(DF $R)") - $(wc -l < "$T/ps5.dec") ))" "| 5a | done | sonnet/high | $R#5a.1 | f2ca478 | y | 0 | n ||2|1|1"
+
+R=t-ps6; mkrun $R 5 5a; cp "$(PF $R)" "$T/ps6.plan"
+node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted --plan-status "done 5a" >/dev/null 2>&1
+ok "lettered row 5a closed first: its line only; row 5 still pending" "$(rowln $R 5a | cut -c1-28)|$(rowln $R 5)" "| 5a | done 5a | sonnet/high|| 5 | pending | | | | | 0 | n |"
+cp "$(PF $R)" "$T/ps6.mid"
+node "$L" close --attempt $R#5.1 --first-pass y --outcome accepted --plan-status "done 5" --plan-result "sha5" >/dev/null 2>&1
+ok "then the plain row 5: its line only; the 5a line stays as the first close left it" "$(rowln $R 5)|$(chg "$T/ps6.mid" "$(PF $R)")|$(rowln $R 5a | cut -c1-28)" "| 5 | done 5 | sonnet/high | $R#5.1 | sha5 | y | 0 | n ||2|| 5a | done 5a | sonnet/high"
+
+# refusals: nothing changes, the ledger is not closed, exit 2, no temp file
+refuse(){ # refuse <name> <run> <attempt> <close args...>
+  local name=$1 r=$2 att=$3; shift 3
+  local a b c
+  a=$(sum "$(F $r)"); b=$(sum "$(PF $r)"); c=$(sum "$(DF $r)")
+  local rcv=$(rc node "$L" close --attempt "$att" --first-pass y --outcome accepted "$@")
+  ok "refused: $name (exit 2; ledger, PLAN.md and DECISIONS.md unchanged; no temp file; not closed)" "$rcv|$([ "$a" = "$(sum "$(F $r)")" ] && [ "$b" = "$(sum "$(PF $r)")" ] && [ "$c" = "$(sum "$(DF $r)")" ] && echo same)|$(tmps $r)|$(jq -r 'select(.id=="'$att'")|.outcome // "open"' "$(F $r)")" "2|same|0|open"
+}
+R=t-ps7; mkrun $R 5 5a
+rm "$(PF $R)"; refuse "--plan-status with no PLAN.md" $R $R#5a.1 --plan-status x --decision y
+R=t-ps8; mkrun $R 5 5a; printf '# Plan\n\n| # | Status |\n|---|---|\n| 5a | pending |\n' > "$(PF $R)"
+refuse "no '## Status' table in PLAN.md" $R $R#5a.1 --plan-status x
+R=t-ps9; mkrun $R 5 5a; LB --run $R --row 7 --model sonnet --effort high >/dev/null; CA --run $R --row 7 --attempt "$R#7.1" --model sonnet --effort high --tokens 1 --tools 1 --ms 1
+refuse "row not in the Status table" $R $R#7.1 --plan-status x --decision y
+R=t-ps10; mkrun $R 5 5a; rm "$(DF $R)"
+refuse "--decision with no DECISIONS.md (PLAN.md is not edited either)" $R $R#5a.1 --plan-status x --decision y
+ok "refused --decision: close created no DECISIONS.md" "$([ -e "$(DF $R)" ] && echo made || echo none)" "none"
+R=t-ps11; mkrun $R 5 5a
+refuse "a line break in --plan-status" $R $R#5a.1 --plan-status $'a\nb'
+refuse "a line break in --plan-result" $R $R#5a.1 --plan-status x --plan-result $'a\r\nb'
+refuse "a line break in --decision" $R $R#5a.1 --plan-status x --decision $'a\nb'
+refuse "--plan-result without --plan-status" $R $R#5a.1 --plan-result x
+refuse "an empty --decision" $R $R#5a.1 --decision ""
+R=t-ps12; mkrun $R 5 5a; sedi 's/ Attempt |/ Tries |/' "$(PF $R)"
+refuse "the Status table has no 'Attempt' column" $R $R#5a.1 --plan-status x
+R=t-ps13; mkrun $R 5 5a; sedi 's/ Escalated |$/ Other |/' "$(PF $R)"
+refuse "--escalated given but the table has no 'Escalated' column" $R $R#5a.1 --plan-status x --escalated n
+R=t-ps14; mkrun $R 5 5a; echo '| 5a | pending | | | | | 0 | n |' > "$T/dup"; sedi "/^| 5a |/r $T/dup" "$(PF $R)"
+refuse "two lines for the row" $R $R#5a.1 --plan-status x
+R=t-ps15; mkrun $R 5 5a; sedi 's/^| 5a | pending | | | | | 0 | n |/| 5a | pending |/' "$(PF $R)"
+refuse "the row's line has no cell under 'Attempt'" $R $R#5a.1 --plan-status x
+R=t-ps16; mkrun $R 5 5a
+refuse "--retries 'abc' with --plan-status" $R $R#5a.1 --plan-status x --retries abc
+
+R=t-ps17; mkrun $R 5 5a
+node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted --plan-status 'done | 2 files \ ok' --plan-result 'a|b|c' >/dev/null 2>&1
+ok "a | in the text is written as \\| (status and result cells)" "$(rowln $R 5a)" "| 5a | done \\| 2 files \\ ok | sonnet/high | $R#5a.1 | a\\|b\\|c | y | 0 | n |"
+ok "...and the shared parser reads the table back: the cells did not shift, the text is unescaped" "$(node -e '
+const P=require(process.argv[1]); const t=P.parseStatusTable(require("fs").readFileSync(process.argv[2],"utf8")); const r=t.rows.find(x=>x.row==="5a");
+console.log([t.rows.length, r.cells.length, r.cells[t.col], r.cells[3], r.cells[4], r.cells[5]].join("~"));' "$PSM" "$(PF $R)")" "2~8~done | 2 files \\ ok~$R#5a.1~a|b|c~y"
+ok "...planStatusRows (the manifest.js reader) sees status and row" "$(node -e 'const P=require(process.argv[1]);console.log(JSON.stringify(P.planStatusRows(require("fs").readFileSync(process.argv[2],"utf8"))))' "$PSM" "$(PF $R)")" '[{"row":"5","status":"pending"},{"row":"5a","status":"done | 2 files \\ ok"}]'
+
+R=t-ps18; mkrun $R 5 5a; sedi "s/\$/$(printf '\r')/" "$(PF $R)"; cp "$(PF $R)" "$T/ps18.plan"   # a literal CR: BSD sed does not read \r in the replacement
+node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted --plan-status "done crlf" >/dev/null 2>&1
+ok "a CRLF PLAN.md keeps its line endings (same CR count, one changed line, CRLF kept on it)" "$(grep -c $'\r' "$T/ps18.plan")|$(grep -c $'\r' "$(PF $R)")|$(chg "$T/ps18.plan" "$(PF $R)")|$(rowln $R 5a | grep -c $'\r$')" "$(wc -l < "$T/ps18.plan" | tr -d ' ')|$(wc -l < "$T/ps18.plan" | tr -d ' ')|2|1"
+R=t-ps19; mkrun $R 5 5a; printf '# Decisions: x\n- no final newline' > "$(DF $R)"
+node "$L" close --attempt $R#5a.1 --first-pass y --outcome accepted --decision "after a file with no final newline" >/dev/null 2>&1
+ok "--decision on a DECISIONS.md with no final newline: the old last line is kept whole, one new line" "$(sed -n 2p "$(DF $R)")|$(wc -l < "$(DF $R)" | tr -d ' ')" "- no final newline|3"
+R=t-ps20; mkdir -p "$ORCH_RUNS_DIR/$R"; { echo "$PLAN_HEAD"; echo "| 3 | pending | | | | | 0 | n |"; } > "$(PF $R)"
+CA --run $R --row 3 --attempt "$R#3.1" --model opus --effort max --tokens 1 --tools 1 --ms 1
+node "$L" close --attempt $R#3.1 --first-pass y --outcome accepted --plan-status "done" >/dev/null 2>&1
+ok "no manifest (no launch event): model/effort come from the ledger line" "$(rowln $R 3 | cut -d'|' -f4)" " opus/max "
+ok "manifest.js still never requires ledger.js, and loads the shared parser" "$(grep -c "require(.*ledger" "$CL/lib/manifest.js")|$(grep -c "require('./plan-status.js')" "$CL/lib/manifest.js")|$(grep -c "require(" "$PSM")" "0|1|0"
+ok "close help documents the three flags" "$(node "$L" help | grep -c -- '--plan-status\|--plan-result\|--decision' | awk '{print ($1>=3)?"yes":"no"}')" "yes"
+ok "the real runs folder was not touched by these (no t-ps run there)" "$(ls "$LIVE/runs" 2>/dev/null | grep -c '^t-ps')" "0"
 
 echo "== live-leak check has teeth (fixtures planted last, outside the suite's scratch trees)"
 X="$T/teeth"; mkdir -p "$X/s/orch/runs/zz-teeth" "$X/clean" "$X/l1" "$X/l2/runs/zz-teeth" "$X/l3/runs/zz-other"

@@ -874,6 +874,7 @@ class CodexExtractor(Extractor):
         self._failed = None
         self._done = False
         self._usage = None
+        self._errs = []
 
     def feed(self, chunk):
         for ev in _json_lines(self._buf, chunk):
@@ -881,6 +882,12 @@ class CodexExtractor(Extractor):
             item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
             if t == "item.completed" and item.get("type") in ("agent_message", "assistant_message"):
                 self._msgs.append(str(item.get("text") or ""))
+            elif t == "item.completed" and item.get("type") == "error":
+                # a non-fatal error item (codex reports e.g. a skipped tool or a config warning this way): a note on the
+                # seat, never the answer, and never a status change (only `turn.failed` fails the seat)
+                msg = _scrub(item.get("message") or item.get("text") or "error item", 200)
+                if msg not in self._errs and len(self._errs) < 3:
+                    self._errs.append(msg)
             elif t == "turn.completed":
                 self._done = True
                 if isinstance(ev.get("usage"), dict):
@@ -908,6 +915,10 @@ class CodexExtractor(Extractor):
 
     def error(self):
         return None if self._msgs else self._failed
+
+    def note(self):
+        """`item.completed` items of type `error`, kept for the seat's record (`detail`). Not the answer, not a failure."""
+        return "codex error item: " + "; ".join(self._errs) if self._errs else None
 
 
 # Features a grounded codex call turns off (names from `codex features list`): apps/plugins (their connectors reach the

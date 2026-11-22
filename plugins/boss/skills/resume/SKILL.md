@@ -43,7 +43,7 @@ Every question to the user, approvals included, is an AskUserQuestion call with 
 
 - `node "${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js" profile show --sid=$WFP_SID` (line 1 shows the preset and the ultracode mirror). If its preset differs from HANDOFF `preset`, run `node "${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js" profile <preset> --sid=$WFP_SID`.
 - Ultracode: if HANDOFF `ultracode` differs from the mirror, restore it both ways: `node "${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js" ultracode on --sid=$WFP_SID` or `node "${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js" ultracode off --sid=$WFP_SID`. This restores the user's choice recorded at handoff. wfp only mirrors ultracode; the native ultracode state is unknown to it, so say so in one line and let the user correct it.
-- Re-check wfp `maxLaunches` (`wfp.js status --sid=$WFP_SID`) against launches so far + 2 x rows still pending + 2 (PROTOCOL.md "Dispatch loop" step 1). Widen it only as that step allows: 2 per new row of an approved plan patch, or in away mode for rows the main chat adds (within the stated limit, logged in DECISIONS.md). Beyond that only the user lifts it.
+- Re-check wfp `maxLaunches` (`wfp.js status --sid=$WFP_SID`) against launches so far + 2 per pending row + 1 per running row + 2 (PROTOCOL.md "Dispatch loop" step 1). Widen it only as that step allows: 2 per new row of an approved plan patch, or in away mode for rows the main chat adds (within the stated limit, logged in DECISIONS.md). Beyond that only the user lifts it.
 
 ## 4. Reconcile rows that were running
 

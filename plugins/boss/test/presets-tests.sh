@@ -4,7 +4,16 @@
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib/compat.sh"   # on macOS: GNU date/stat/touch/md5sum/wc shims (test/lib)
 CL="${ORCH_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"; echo "code under test: $CL"   # the checkout this suite tests (a worktree runs its own code)
-unset ORCH_DIR ORCH_RUNS_DIR BOSS_PROGRESS_DIR   # the guard and ledger defaults are under test; the ledger round trip below uses the real runs dir RD and deletes it
+# A scratch environment ALWAYS (a direct run included; under scripts/test-all.sh it nests inside the suite's own scratch): HOME, the
+# config dir and the data dir are throwaway folders, so the ledger round trip below and the guard probes never touch the real
+# ~/.claude or the real runs folder, whatever the caller exported. ORCH_DIR, ORCH_RUNS_DIR and BOSS_PROGRESS_DIR stay unset: the guard and
+# ledger DEFAULTS are under test (they resolve to <data dir>/runs, which is scratch).
+SCR=$(mktemp -d "${TMPDIR:-/tmp}/boss-presets-env.XXXXXX") || exit 1
+SCR=$(cd "$SCR" && pwd -P)
+mkdir -p "$SCR/home/.claude" "$SCR/data"
+unset ORCH_DIR ORCH_RUNS_DIR BOSS_PROGRESS_DIR CLAUDE_CONFIG_DIR WFP_STATE_DIR
+export HOME="$SCR/home" BOSS_DATA="$SCR/data" TMPDIR="$SCR"
+trap 'rm -rf "$SCR"' EXIT
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "PASS $1"; else fail=$((fail+1)); echo "FAIL $1 (got: $2 | want: $3)"; fi; }
 
@@ -13,7 +22,7 @@ fx=$(WFP_SRC="$CL" bash "$CL/wfp/fixtures/run.sh" 2>&1); echo "$fx" | grep '^FAI
 fp=$(echo "$fx" | tail -1 | sed -n 's/^pass=\([0-9]*\) fail=\([0-9]*\)$/\1 \2/p'); set -- $fp
 pass=$((pass + ${1:-0})); fail=$((fail + ${2:-1})); echo "wfp fixtures: pass=${1:-?} fail=${2:-?}"
 
-echo "== 2. ledger round trip in a temp run folder under the real runs dir, then deleted"
+echo "== 2. ledger round trip in a temp run folder under the scratch runs dir (default path <data dir>/runs), then deleted"
 L="$CL/lib/ledger.js"; RUN="zz-ledger-selftest-$$"; RD="$(node "$CL/lib/paths.js" --json | jq -r .runsDir)/$RUN"; F="$RD/ledger.jsonl"
 base="--run $RUN --mode subagent --repo zz-selftest-repo --area selftest"
 o=$(node "$L" add $base --row 1 --role planning --agent orch-planner --model opus --effort high --tokens 88,332 --tools 11 --ms 150000 --first-pass y); rc=$?

@@ -1,6 +1,6 @@
 ---
 name: approve
-description: "User-invoked only: approve a checked plan: confirm the plan check passed, set the wfp launch cap (2 per pending row plus 2 spare), record the approval and launch the first pending wave."
+description: "User-invoked only: approve a checked plan: confirm the plan check passed, set the wfp launch cap (2 per pending row, 1 per running row, plus 2 spare), record the approval and launch the first pending wave."
 disable-model-invocation: true
 argument-hint: "[run folder name]"
 ---
@@ -25,9 +25,9 @@ Argument: `$ARGUMENTS`
 
 ## 3. Set the launch cap
 
-- Count the rows still pending in PLAN.md's Status table.
+- Count the rows still pending in PLAN.md's Status table: the rows whose Status is `pending` (not launched yet) count 2 launches each. A `running` row has used its first launch (already in launches so far) and still owns one step-up, so it counts 1. The 2 spare stay spare.
 - Run `node "${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js" status`. The `agents` line gives `launches` so far.
-- N = launches so far + 2 x rows still pending + 2: the first try and the one step-up per row, plus 2 spare. Compute it from the rows, never from `launch_total`: a plan written before this rule (`launch_total` = rows plus an allowance) is approved with the same formula. Run `node "${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js" set maxLaunches=N` with N written as the number.
+- N = launches so far + 2 per pending row + 1 per running row + 2: the first try and the one step-up per pending row, the one step-up of a running row, plus 2 spare. Compute it from the rows, never from `launch_total`: a plan written before this rule (`launch_total` = rows plus an allowance) is approved with the same formula. Run `node "${CLAUDE_PLUGIN_ROOT}/wfp/wfp.js" set maxLaunches=N` with N written as the number.
 
 ## 4. Record the approval
 

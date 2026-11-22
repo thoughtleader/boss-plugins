@@ -257,7 +257,7 @@ ok "ingest loads no sqlite (and writes the line)" "$(probe "$L" ingest --file "$
 ok "manifest.js show loads no sqlite" "$(probe "$M" show --run $R)" "SQLITE=false"
 ok "positive control: sync loads sqlite" "$(ORCH_METRICS_DB="$T/probe.db" probe "$L" sync)" "SQLITE=true"
 ok "require(ledger.js) loads no sqlite" "$(node -e "require('$L'); console.log(process.moduleLoadList.some(m=>/sqlite/.test(m)))" 2>&1)" "false"
-CP="$T/copy/lib"; mkdir -p "$CP"; cp "$L" "$M" "$(dirname "$L")/paths.js" "$(dirname "$L")/defaults.json" "$CP/"
+CP="$T/copy/lib"; mkdir -p "$CP"; cp "$L" "$M" "$(dirname "$L")/paths.js" "$(dirname "$L")/plan-status.js" "$(dirname "$L")/defaults.json" "$CP/"
 R=p3; mkdir -p "$ORCH_RUNS_DIR/$R"
 node "$CP/manifest.js" launch --run $R --row 3 --role discovery --agent orch-scout --model haiku --effort low --mode wave --repo r --area a >/dev/null 2>&1
 sed "s/p2#3.1/$R#3.1/; s/aprobe1/aprobe3/g; s/tu-probe/tu-probe3/" "$T/notice.txt" > "$T/notice3.txt"
@@ -288,6 +288,23 @@ ok "retry kind json: counts per kind" "$(echo "$KJ" | jq -c '.retry_kinds.claude
 ok "retry kind: the model/effort rows are unchanged by the split (sonnet/high 5 attempts, opus/high 2)" "$(echo "$KT" | grep -cE '^(sonnet/high +5 |opus/high +2 )')" "2"
 ok "retry kind: tokens-per-accepted report has no retry kind line" "$(ORCH_METRICS_DB="$T/rk.db" ORCH_RUNS_DIR="$RK" node "$L" report tokens-per-accepted 2>&1 | grep -c '^retry kind')" "0"
 ok "retry kind: old fixture lines (no field, retries>0) count as unlabelled" "$(echo "$RF" | grep '^retry kind (claude):' | grep -c 'unlabelled 2')|$(echo "$RF" | grep -c '^retry kind (codex):')" "1|1"
+
+echo "== provisional waiting notice (item 14): interim, promoted and final stops of one attempt count once in sqlite"
+PW="$T/pw"; mkdir -p "$PW/runs"
+pwn(){ printf '<task-notification>\n<task-id>%s</task-id>\n<tool-use-id>%s</tool-use-id>\n<output-file>/tmp/fixture/%s.output</output-file>\n<status>completed</status>\n<summary>Agent "[sonnet/high] %s#1.1 w" %s</summary>\n<result>ok</result>\n<usage><subagent_tokens>%s</subagent_tokens><tool_uses>%s</tool_uses><duration_ms>%s</duration_ms></usage>\n</task-notification>' "$1" "$2" "$1" "$3" "$4" "$5" "$6" "$7"; }
+pwe(){ ORCH_RUNS_DIR="$PW/runs" ORCH_DIR="$PW" "$@"; }   # own scratch runs dir and db
+for RR in pw-fin pw-close; do
+  mkdir -p "$PW/runs/$RR"; pwe node "$M" launch --run $RR --row 1 --role implementation --agent orch-builder --model sonnet --effort high --mode wave --repo r --area a >/dev/null 2>&1
+  pwn apw-$RR tu-$RR $RR "is waiting on its own background work" 100 3 1000 > "$PW/$RR.i.txt"; pwe node "$L" ingest --file "$PW/$RR.i.txt" >/dev/null 2>&1
+done
+pwn apw-pw-fin tu-pw-fin pw-fin finished 700 9 5000 > "$PW/pw-fin.f.txt"; pwe node "$L" ingest --file "$PW/pw-fin.f.txt" >/dev/null 2>&1
+pwe node "$L" close --attempt pw-close#1.1 --first-pass y --outcome accepted >/dev/null 2>&1
+pws(){ ORCH_METRICS_DB="$PW/m.db" pwe node "$L" "$@" 2>&1; }
+pws sync >/dev/null
+ok "sqlite: interim then final, and interim then close, make one attempt each (not one per stop event)" "$(sqlite3 -readonly "$PW/m.db" "SELECT run||' '||COUNT(*) FROM attempts GROUP BY run ORDER BY run" | tr '\n' ';')" "pw-close 1;pw-fin 1;"
+ok "sqlite: the final attempt carries the final tokens (700), the closed one the promoted interim figures (100)" "$(sqlite3 -readonly "$PW/m.db" "SELECT run||' '||tokens FROM attempts ORDER BY run" | tr '\n' ';')" "pw-close 100;pw-fin 700;"
+ok "report tokens-per-accepted counts each attempt once (tokens 800 over 2 attempts)" "$(pws report tokens-per-accepted | grep -c '^role implementation: 2 rows, 2 attempts, tokens 800,')" "1"
+ok "a second sync changes nothing (one attempt per run)" "$(pws sync >/dev/null; sqlite3 -readonly "$PW/m.db" 'SELECT COUNT(*) FROM attempts')" "2"
 
 echo "== live files"
 ok "live ACTIVE kept and free of this suite's paths (content check; peer-written, so no md5)" "$(activecheck)" "ok"

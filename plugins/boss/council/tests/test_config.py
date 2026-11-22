@@ -627,6 +627,30 @@ class RunTables(unittest.TestCase):
             bad = merged(seat=[{"id": "deepseek", "provider": "openrouter", "model": "m", "provider_prefs": pin}])
             self.assertEqual(row(bad).result, "FAIL", pin)
 
+    def test_22e_a_speed_preference_in_force_gets_one_informational_row(self):
+        """Item 1: the preflight table names the seat and the preference (sort, a throughput / latency threshold);
+        PASS, never blocking; no row when no seat sets one."""
+        from councillib import preflight
+        def rows(cfg):
+            return [r for r in preflight.table_rows(cfg) if r.check == "routing_pref"]
+        self.assertEqual(rows(merged()), [])
+        self.assertEqual(rows(merged(seat=[{"id": "a", "provider": "openrouter", "model": "m",
+                                            "provider_prefs": {"require_parameters": True, "order": ["x"]}}])), [])
+        cfg = merged(seat=[{"id": "deepseek", "provider": "openrouter", "model": "m",
+                            "provider_prefs": {"preferred_min_throughput": 80, "sort": "throughput"}},
+                           {"id": "plain", "provider": "openrouter", "model": "m2"},
+                           {"id": "codex", "provider": "codex", "model": "c"}])
+        got = rows(cfg)
+        self.assertEqual(len(got), 1)
+        self.assertEqual((got[0].result, got[0].provider, got[0].stage), ("PASS", "engine", "engine"))
+        self.assertEqual(got[0].detail, "seat deepseek: sort throughput, preferred_min_throughput 80")
+        self.assertNotIn("plain", got[0].detail)
+        # a preference on the shared `[providers.openrouter.provider]` table is in force for every OpenRouter seat
+        cfg = merged(providers={"openrouter": {"provider": {"preferred_max_latency": 3}}},
+                     seat=[{"id": "a", "provider": "openrouter", "model": "m"}, {"id": "b", "provider": "openrouter", "model": "n"}])
+        self.assertEqual(rows(cfg)[0].detail, "seats a,b: preferred_max_latency 3")
+        self.assertEqual({r.result for r in preflight.table_rows(cfg)}, {"PASS"})
+
     def test_23_the_openrouter_free_check_reports_the_routing_row(self):
         cfg = config.load()
         seen = []

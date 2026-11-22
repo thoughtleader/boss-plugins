@@ -12,6 +12,12 @@
 //   stop      only final:true closes an attempt (status completed -> done, else failed; a turn-limit stop -> waiting_input, not failed); stop.model_id / effort_observed
 //             override both; non-final stops are ignored
 //   outcome   meta.first_pass / retries / escalated
+//   a continuation launch (launch.continues set: `launch --continue`, then a message to the same agent, so no start event ever comes) with no stop yet is running, not queued
+//   a gate row whose plan cell says gaps_found or revise (a builder fix can resolve those; human_needed never: it stays blocked and keeps its "needs your decision" line) is not blocked,
+//   and prints no such line, while fix work is under way: an attempt launched after the review's final stop and running or finished (the review = the row's newest attempt whose result
+//   file carries a gate status, else its newest final stop) that is a later attempt of the same row, or a retry with cause review-findings (what `launch --cause` records) of a row the
+//   gate's `Depends on` cell names, or of any row when that cell is empty (the manifest does not say which row a review covers: with no `Depends on` cell, which is the usual plan,
+//   a fix for any row counts, and for another review's findings too). A fix attempt whose last recorded outcome (`ledger.js close --outcome`) is blocked or dropped does not count.
 //   a row's state comes from its newest attempt (PLAN.md Status cell only as fallback); attempt n replaces attempt n-1
 // Attention hook point: <run>/attention.json (an array of boss.progress attention items) is folded in when present,
 // and a plan row whose Status cell is a gate status (cfg.gateStatuses) becomes an approval item.
@@ -102,16 +108,24 @@ function groupAttempts(events, parseAttemptId) {
 // it speaks for the attempt only when strictly LATER than every real final stop, by its own ts (an equal ts is not later; seq only when a ts is missing). Same rule as
 // manifest.js pickStop (copied: this module is pure); ingest order must not let a late-swept turn-limit notice override a real finish.
 const TURN_LIMIT = 'stopped-turn-limit';
+const WAIT_DETAIL = 'waiting on its own background work';
 const TL_DETAIL = 'stopped at its turn limit (partial result): continue it with launch --continue, or accept the partial';
+// the time a stop is shown as the attempt's end: a promoted stop's `ended_at` (its waiting notice's ts) when valid, else its ts (display only; ordering keeps `ts`)
+const endTs = s => (s.promoted && typeof s.ended_at === 'string' && Number.isFinite(Date.parse(s.ended_at)) ? s.ended_at : s.ts);
 const laterStop = (a, b) => { const ta = Date.parse(a.ts), tb = Date.parse(b.ts); return Number.isFinite(ta) && Number.isFinite(tb) ? ta > tb : (a.seq || 0) > (b.seq || 0); };
 function attemptState(g) {
   const fin = g.stops.filter(s => s.final === true), real = fin.filter(s => s.phase !== TURN_LIMIT);
   const pick = last(fin.filter(s => s.phase === TURN_LIMIT && real.every(r => laterStop(s, r)))) || last(real);
   if (pick) return { state: pick.phase === TURN_LIMIT ? 'waiting_input' : pick.status === 'completed' ? 'done' : 'failed', open: false, fin: pick };
   // The agent finished its turn and went idle ("is waiting"): a non-final `waiting` stop newer than the last start. Nobody continued it, so it is done, not running.
+  // A marked one (`provisional: true`, written by ingest since the interim rule) is not a stop: the agent still waits on its own background work, so the attempt
+  // stays open and running until a final notice (or a promotion: ledger.js close, reconcile's waiting-timeout) arrives. An older unmarked one reads as done, as before.
   const idle = last(g.stops.filter(s => s.phase === 'waiting' && s.status === 'completed'));
-  if (idle && (!g.starts.length || (last(g.starts).seq || 0) < (idle.seq || 0))) return { state: 'done', open: false, fin: idle, idle: true };
+  if (idle && (!g.starts.length || (last(g.starts).seq || 0) < (idle.seq || 0))) return idle.provisional === true ? { state: 'running', open: true, fin: null, waiting: true } : { state: 'done', open: false, fin: idle, idle: true };
   if (g.starts.length || g.stops.length) return { state: 'running', open: true, fin: null };
+  // A continuation (`launch --continue`, then a message to the same agent) has no start event: the agent was already running. No stop yet means it is working.
+  const L = last(g.launches);
+  if (L && L.continues) return { state: 'running', open: true, fin: null, continued: true };
   return { state: 'queued', open: true, fin: null };
 }
 
@@ -163,6 +177,29 @@ function buildSnapshot(run, events, ctx) {
   const rowIds = [...plan.order];
   for (const r of [...byRow.keys()].sort(rowCmp)) if (!plan.rows.has(r)) rowIds.push(r);
 
+  // A gate row (review) whose plan cell says gaps_found and whose findings are already being worked is not waiting on the owner: it waits for the fix round.
+  // fixing(row): an attempt launched after the row's last final stop, running or done, that is a later attempt of the same row or a retry caused by review findings.
+  const REPAIRABLE = ['gaps_found', 'revise']; // gate statuses a builder fix can resolve; human_needed is not one
+  const gateCell = row => { const p = plan.rows.get(row), w = p ? word(p.status) : ''; return gateWords.includes(w) && REPAIRABLE.includes(w); };
+  const lastOutcome = g => { const o = last(g.outcomes.filter(x => typeof x.outcome === 'string')); return o ? o.outcome.toLowerCase() : null; };
+  const resultWord = new Map(); // attempt id -> the status word of its result file (filled while the attempt items are built)
+  const fixing = row => {
+    const finals = g => g.stops.filter(s => s.final === true).map(s => s.seq || 0);
+    const mine = byRow.get(row) || [], gated = mine.filter(g => gateWords.includes(resultWord.get(g.id)));
+    const fins = (gated.length ? gated : mine).flatMap(finals);
+    if (!fins.length) return false;
+    const ref = Math.max(...fins), p = plan.rows.get(row);
+    const deps = p && p.depends_on ? p.depends_on.split(/[,;\s]+/).filter(id => ROW_ID.test(id)) : [];
+    for (const g of groups.values()) {
+      const L = last(g.launches);
+      if (!L || (L.seq || 0) <= ref) continue;
+      if (!(g.row === row || (L.cause === 'review-findings' && (!deps.length || deps.includes(g.row))))) continue;
+      if (['blocked', 'dropped'].includes(lastOutcome(g))) continue;
+      if (['running', 'done'].includes(attemptState(g).state)) return true;
+    }
+    return false;
+  };
+
   const attemptItems = new Map(); // row -> [item]
   const rowInfo = new Map();      // row -> {state, item}
   for (const row of rowIds) {
@@ -182,13 +219,15 @@ function buildSnapshot(run, events, ctx) {
       if (model && model !== 'unknown') it.model = model;
       if (effort && effort !== 'unknown') it.effort = effort;
       if (S && S.ts) it.started_at = S.ts;
-      if (st.fin && st.fin.ts) it.ended_at = st.fin.ts;
+      else if (st.continued && L && L.ts) it.started_at = L.ts; // a continuation has no start event: it began working at its launch
+      if (st.fin && st.fin.ts) it.ended_at = endTs(st.fin); // a promoted waiting line: the waiting notice's time (ended_at), not the promotion's
       it.updated_at = (last([...g.launches, ...g.starts, ...g.stops, ...g.outcomes].sort(bySeq)) || {}).ts;
       const art = [];
       let res = null; try { res = ctx.resultFor ? ctx.resultFor(row, L, g.id, atts.length) : null; } catch { res = null; }
       const meta = { attempt_id: g.id };
       if (L && L.ts) meta.launched_at = L.ts;
       if (res && res.match) {
+        resultWord.set(g.id, word(res.fm && res.fm.status));
         const sha = hex(res.fm && res.fm.sha);
         if (sha) art.push({ label: 'commit', path: null, sha });
         art.push({ label: 'result', path: res.path, sha: null });
@@ -201,6 +240,7 @@ function buildSnapshot(run, events, ctx) {
       if (lm && model && lm !== `${model}${effort ? '/' + effort : ''}`) meta.launch_model = lm;
       if (O) for (const k of ['first_pass', 'retries', 'escalated']) if (O[k] !== undefined && O[k] !== null) meta[k] = O[k];
       if (st.state === 'waiting_input' && st.fin && st.fin.phase === TURN_LIMIT) it.detail = TL_DETAIL;
+      if (st.waiting) it.detail = WAIT_DETAIL;
       if (st.fin) {
         if (st.fin.status && st.fin.status !== 'completed') meta.stop_status = clip(st.fin.status, 40);
         for (const k of ['tokens', 'tools', 'ms']) if (Number.isFinite(st.fin[k])) meta[k] = st.fin[k];
@@ -216,7 +256,7 @@ function buildSnapshot(run, events, ctx) {
     let state;
     if (items.some(i => i._open && i.state === 'running')) state = 'running';
     else if (newest && newest._open) state = 'queued';
-    else if (cs === 'blocked') state = 'blocked';
+    else if (cs === 'blocked') state = gateCell(row) && fixing(row) ? 'queued' : 'blocked'; // a gate under repair waits for the fix round; it is not blocked on the owner
     else if (cs === 'done' || cs === 'skipped') state = cs;
     else if (newest) state = newest.state;
     else if (cs === 'failed' || cs === 'running') state = cs;
@@ -224,6 +264,7 @@ function buildSnapshot(run, events, ctx) {
     const L1 = last((byRow.get(row) || []).flatMap(g => g.launches).sort(bySeq));
     const it = { id: `row:${row}`, parent: null, kind: isGate(p, L1) ? 'gate' : 'row', label: clip((p && p.subtask) || (L1 && L1.subtask) || descName || `row ${row}`, 200), state };
     if (state === 'waiting_input' && newest && newest.state === 'waiting_input' && newest.detail) it.detail = newest.detail;
+    if (items.some(i => i._open && i.detail === WAIT_DETAIL)) it.activity = WAIT_DETAIL; // a plan row's own activity cell (below) wins
     // Optional reporting fields enrich presentation without affecting dispatch.
     if (p) {
       it.instructions = clip(p.instructions || p.subtask || '', 4000);

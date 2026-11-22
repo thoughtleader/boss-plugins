@@ -32,7 +32,7 @@ Inputs from the brief: goal, `<run>/PLAN.md` (its frontmatter carries preset, ul
 5. **Mode:** Workflow only for 5+ similar items, unknown-count sweeps, 3-vote pre-release verification or judge panels, and marked "invisible in VS Code". Agent team only where workers must argue.
 6. **Waves:** list each wave's files. Any file in two rows of one wave is a blocker. Parallel rows in one repo need `isolation: worktree`, and a non-default base needs a setup command in the pack. Each worktree row's pack names its base SHA and worktree path and uses repo-relative code paths. After any wave whose rows ran in worktrees, a serial `orch-builder` integration row merges the wave's branches into the target branch, runs the combined tests and records the merged SHA, and the final review checks that SHA; a worktree wave with no such row is a blocker. Each row's inputs are produced by an earlier wave.
 7. **Scope:** no row over 3 steps or 5 files without a Why. Scope-shrink wording ("v1", "placeholder", "static for now", "simplified for now") is a blocker.
-8. **Launch total:** the plan states its launch total, and `launch_total` equals `2 x rows + 2`. Missing is a blocker: approving the plan approves its waves and sets the wfp launch cap (2 per pending row plus 2).
+8. **Launch total:** the plan states its launch total, and `launch_total` equals `2 x rows + 2`. Missing is a blocker: approving the plan approves its waves and sets the wfp launch cap (2 per pending row, 1 per running row, plus 2).
 
 ## Output
 

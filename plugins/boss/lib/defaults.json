@@ -5,6 +5,7 @@
   "leaseTtlSec": 7200,
   "leaseRenewWhenLeftSec": 3600,
   "gapInflightSec": 7200,
+  "waitingGraceSec": 1800,
   "sweepTailBytes": 4194304,
   "passStatuses": ["done", "passed", "pass"],
   "gateStatuses": ["gaps_found", "revise", "human_needed"],

@@ -59,7 +59,7 @@ rc(){ "$@" >/dev/null 2>&1; echo $?; }
 ago(){ date -u -d "-$1 min" +%Y-%m-%dT%H:%M:%S.000Z; }
 
 echo "== config.json (§10.0) and module"
-want='{"returnCapBytes":2048,"returnCapMode":"flag","returnCapAgentTypes":"^orch-","leaseTtlSec":7200,"leaseRenewWhenLeftSec":3600,"gapInflightSec":7200,"sweepTailBytes":4194304,"passStatuses":["done","passed","pass"],"gateStatuses":["gaps_found","revise","human_needed"],"readOnlyRoles":["planning","plan-check","discovery","diagnosis","review"],"lockWaitMsHook":1000,"lockWaitMsCli":3000}'
+want='{"returnCapBytes":2048,"returnCapMode":"flag","returnCapAgentTypes":"^orch-","leaseTtlSec":7200,"leaseRenewWhenLeftSec":3600,"gapInflightSec":7200,"waitingGraceSec":1800,"sweepTailBytes":4194304,"passStatuses":["done","passed","pass"],"gateStatuses":["gaps_found","revise","human_needed"],"readOnlyRoles":["planning","plan-check","discovery","diagnosis","review"],"lockWaitMsHook":1000,"lockWaitMsCli":3000}'
 ok "defaults.json holds the §10.0 keys and values incl. gapInflightSec (plus progress and the guard/metrics/analytics keys)" "$(jq -cS 'del(.progress,.guard,.metrics,.analytics)' "$REAL_CFG")" "$(echo "$want" | jq -cS .)"
 ok "require() prints nothing" "$(node -e "require('$M')" 2>&1)" ""
 ok "require() of manifest.js prints nothing" "$(env -u ORCH_DIR -u ORCH_RUNS_DIR node -e "require('$M')" 2>&1)" ""
@@ -818,6 +818,72 @@ mkdir -p "$PJ/SF5W/subagents"; echo "{\"agentType\":\"orch-builder\",\"descripti
 E --run $R --type stop --json "{\"attempt\":\"$R#1.1\",\"task_id\":\"f5w\",\"phase\":\"waiting\",\"status\":\"completed\",\"tools\":1,\"ms\":1}"
 has "idle stop: reconcile sees the waiting stop, not 'live'" "$(rowline "$(RC --run $R --sid SF5W)" 1)" "| unknown no-result | stop waiting"
 
+# item 14: an interim waiting notice recorded by ingest is provisional ("provisional": true): the row waits, it is not done; the final notice replaces it;
+# close / waiting-timeout (config waitingGraceSec, default 1800 s) promote it. The block above is the OLD format (no marker): unchanged.
+echo "== provisional waiting notice (item 14): waits, final replaces it, waiting-timeout fallback"
+PW(){ # run task age_min [tokens] : a provisional waiting stop for <run>#1.1, <age_min> minutes old
+  E --run "$1" --type stop --json "{\"attempt\":\"$1#1.1\",\"task_id\":\"$2\",\"tool_use_id\":\"tu-$1\",\"phase\":\"waiting\",\"status\":\"completed\",\"provisional\":true,\"ts\":\"$(ago $3)\",\"tokens\":${4:-80},\"tools\":2,\"ms\":50,\"model\":\"opus\",\"effort\":\"high\",\"agent\":\"orch-builder\"}"; }
+R=f5p; mkdir -p "$(RD $R)"
+LR --run $R --row 1 --role implementation --sid SF5P >/dev/null 2>&1; start $R "$R#1.1" tu-$R SF5P
+mkdir -p "$PJ/SF5P/subagents"; echo "{\"agentType\":\"orch-builder\",\"description\":\"[opus/high] $R#1.1 x\",\"toolUseId\":\"tu-$R\"}" > "$PJ/SF5P/subagents/agent-f5p.meta.json"
+result "$(RD $R)/1-x.md" done none "$R#1.1" "no commit by design"
+PW $R f5p 5
+O=$(RC --run $R --sid SF5P); LN=$(rowline "$O" 1)
+has "provisional: reconcile says waiting, with a matching result file present" "$LN" "| unknown waiting |"
+has "provisional: reconcile names it" "$LN" "stop none (waiting on its own background work, interim notice 5m old)"
+ok "provisional: next is wait, not advance" "$(echo "$LN" | awk -F' [|] ' '{print $NF}')" "wait"
+ok "provisional: reconcile --json: no stop, waiting with its figures" "$(RC --run $R --sid SF5P --json | jq -c '.rows[0]|[.verdict,.next,.evidence.stop,.evidence.waiting.tokens,.evidence.waiting.tools,.evidence.waiting.ms]')" '["unknown","wait",null,80,2,50]'
+ok "provisional: young notice, nothing promoted, no waiting-timeout word" "$(echo "$O" | grep -c 'waiting-timeout')|$(jq -c 'select(.type=="stop" and .final==true)' "$(MF $R)" | wc -l | tr -d ' ')|$([ -e "$(RD $R)/ledger.jsonl" ] && echo line || echo noline)" "0|0|noline"
+ok "provisional: the stored stop keeps its figures and is marked" "$(jq -c 'select(.type=="stop")|[.provisional,.final,.tokens,.tools,.ms]' "$(MF $R)")" "[true,false,80,2,50]"
+SO=$(node "$M" show --run $R)
+has "provisional: show lists it open, state waiting, flagged waiting-own-work" "$SO" "$R#1.1  waiting"
+has "provisional: show flag" "$SO" "[waiting-own-work]"
+has "provisional: status says waiting on its own background work" "$(node "$M" status --run $R)" "waiting (own background work)"
+ok "provisional: status --json: row open, waiting, not done" "$(node "$M" status --run $R --json | jq -c '.rows[0]|[.open,.waiting,.done]')" "[true,true,false]"
+ok "provisional: launch --continue is refused (exit 2) and writes no launch" "$(rc L --run $R --row 1 --model opus --effort high --continue "$R#1.1")|$(nlaunch $R)" "2|1"
+has "provisional: the refusal says why and names the way out" "$(L --run $R --row 1 --model opus --effort high --continue "$R#1.1" 2>&1 >/dev/null)" "waiting on its own background work (interim notice, not final)"
+E --run $R --type stop --json "{\"attempt\":\"$R#1.1\",\"task_id\":\"f5p\",\"tool_use_id\":\"tu-$R\",\"phase\":\"finished\",\"status\":\"completed\",\"tokens\":200,\"tools\":7,\"ms\":500,\"model\":\"opus\",\"effort\":\"high\"}"
+O=$(RC --run $R --sid SF5P)
+has "interim then final: the row is done, next advance, via the final stop" "$(rowline "$O" 1)" "| done done | stop finished · result done@"
+ok "interim then final: the final stop speaks (figures 200/7/500), the interim one stays on record" "$(node "$M" show --run $R --json | jq -c '.attempts[0]|[.state,(.stops|length),.stops[-1].tokens]')" '["finished",2,200]'
+ok "interim then final: launch --continue is allowed now" "$(rc L --run $R --row 1 --model opus --effort high --continue "$R#1.1")" "0"
+# the fallback: reconcile promotes a provisional notice older than the grace period, with no later notice
+R=f5q; mkdir -p "$(RD $R)"
+LR --run $R --row 1 --role implementation --sid SF5Q >/dev/null 2>&1; start $R "$R#1.1" tu-$R SF5Q
+mkdir -p "$PJ/SF5Q/subagents"; echo "{\"agentType\":\"orch-builder\",\"description\":\"[opus/high] $R#1.1 x\",\"toolUseId\":\"tu-$R\",\"finished\":true}" > "$PJ/SF5Q/subagents/agent-f5q.meta.json"
+result "$(RD $R)/1-x.md" done none "$R#1.1" "no commit by design"
+PW $R f5q 40 90
+O=$(RC --run $R --sid SF5Q); LN=$(rowline "$O" 1)
+has "waiting-timeout: reconcile says so, in one word" "$O" "$R#1.1: waiting-timeout: interim waiting notice older than 30 min with no later notice; promoted (waiting-timeout), ledger line written"
+has "waiting-timeout: the row is done, via the promoted stop" "$LN" "| done done | stop finished (promoted: waiting-timeout)"
+ok "waiting-timeout: the promoted stop copies the figures; the ledger line carries them and the marker" "$(jq -c 'select(.type=="stop" and .final==true)|[.phase,.promoted,.tokens,.tools,.ms]' "$(MF $R)")|$(jq -c '[.tokens,.tools,.ms,.promoted]' "$(RD $R)/ledger.jsonl")" '["finished","waiting-timeout",90,2,50]|[90,2,50,"waiting-timeout"]'
+O=$(RC --run $R --sid SF5Q)
+ok "waiting-timeout: a second reconcile promotes nothing more (idempotent)" "$(echo "$O" | grep -c 'waiting-timeout: interim')|$(jq -c 'select(.type=="stop" and .final==true)' "$(MF $R)" | wc -l | tr -d ' ')|$(wc -l < "$(RD $R)/ledger.jsonl" | tr -d ' ')" "0|1|1"
+# the promoted stop's end time is the waiting notice's (ended_at); its ts stays the write time, so ordering and the duplicate key are untouched
+W=$(jq -r 'select(.type=="stop" and .provisional==true)|.ts' "$(MF $R)")
+ok "waiting-timeout: ended_at on the promoted stop is the waiting notice's ts; its own ts is the later promotion time; ms and tokens are the notice's" "$(jq -r 'select(.type=="stop" and .final==true)|[(.ended_at=="'$W'"),(.ts>"'$W'"),.ms,.tokens,.key]|tostring' "$(MF $R)")" '[true,true,50,90,"f5q:promoted:waiting-timeout"]'
+ok "waiting-timeout: reconcile --json shows the waiting notice's time as the stop's end, and the ledger line's ts is the same" "$(RC --run $R --sid SF5Q --json | jq -r '.rows[0].evidence.stop.ts')|$(jq -r .ts "$(RD $R)/ledger.jsonl")" "$W|$W"
+# a promoted stop written before the field existed reads as before: its own ts
+R=f5u; mkdir -p "$(RD $R)"
+LR --run $R --row 1 --role implementation --sid SF5U >/dev/null 2>&1; start $R "$R#1.1" tu-$R SF5U
+mkdir -p "$PJ/SF5U/subagents"; echo "{\"agentType\":\"orch-builder\",\"description\":\"[opus/high] $R#1.1 x\",\"toolUseId\":\"tu-$R\",\"finished\":true}" > "$PJ/SF5U/subagents/agent-f5u.meta.json"
+result "$(RD $R)/1-x.md" done none "$R#1.1" "no commit by design"
+OLD=$(ago 100)
+E --run $R --type stop --json "{\"attempt\":\"$R#1.1\",\"task_id\":\"f5u\",\"tool_use_id\":\"tu-$R\",\"phase\":\"finished\",\"status\":\"completed\",\"final\":true,\"promoted\":\"close\",\"ts\":\"$OLD\",\"tokens\":70,\"tools\":2,\"ms\":50,\"model\":\"opus\",\"effort\":\"high\",\"agent\":\"orch-builder\"}"
+ok "an old promoted stop (no ended_at): reconcile --json shows its own ts, as before" "$(RC --run $R --sid SF5U --json | jq -r '.rows[0].evidence.stop|[.ts,.promoted]|tostring')" "[\"$OLD\",\"close\"]"
+# a notice that is old but has a newer start (the agent resumed): not promoted
+R=f5r; mkdir -p "$(RD $R)"
+LR --run $R --row 1 --role implementation --sid SF5R >/dev/null 2>&1; start $R "$R#1.1" tu-$R SF5R
+PW $R f5r 40
+E --run $R --type start --json "{\"attempt\":\"$R#1.1\",\"tool_use_id\":\"tu2-$R\",\"transcript_path\":\"$PJ/SF5R.jsonl\",\"session\":\"SF5R\"}"
+ok "waiting-timeout: an old interim notice with a newer start is not promoted" "$(RC --run $R --sid SF5R | grep -c 'waiting-timeout: interim')|$(jq -c 'select(.type=="stop" and .final==true)' "$(MF $R)" | wc -l | tr -d ' ')" "0|0"
+# the grace period is config waitingGraceSec (seconds), read like the other keys
+R=f5s; mkdir -p "$(RD $R)"; CD=$T/gracecfg; mkdir -p "$CD"; echo '{"waitingGraceSec":120}' > "$CD/config.json"
+LR --run $R --row 1 --role implementation --sid SF5S >/dev/null 2>&1; start $R "$R#1.1" tu-$R SF5S
+PW $R f5s 5
+ok "config waitingGraceSec 120: a 5-minute-old notice is promoted (default 1800 would keep it)" "$(ORCH_DIR=$CD RC --run $R --sid SF5S | grep -c 'older than 2 min with no later notice; promoted (waiting-timeout)')" "1"
+ok "config default: waitingGraceSec 1800 in a scratch module load" "$(node -e "console.log(require('$M').cfg.waitingGraceSec)")" "1800"
+
 # fixture 6 (A-19): the trailer commit only on side branch orch/x
 R=f6; RP="$T/repo6"; mkdir -p "$(RD $R)"; mkrepo "$RP"
 LR --run $R --row 1 --role implementation --git "$RP" >/dev/null 2>&1; start $R "$R#1.1" tu-f6 SF6; fstop $R "$R#1.1" k-f6
@@ -827,6 +893,58 @@ OUT=$(RC --run $R)
 has "fixture 6 (A-19): done" "$(rowline "$OUT" 1)" "| done done |"
 has "fixture 6: names the side branch" "$(rowline "$OUT" 1)" "commit ${SHA6:0:7}@orch/x | advance"
 ok "fixture 6: main does not contain it" "$(RC --run $R --json | jq -c '.rows[0].evidence.commit.branches')" '["orch/x"]'
+
+# item 33: a lettered result name. Row 26 takes 26b-fix.md only when the run has no row 26b of its own; 5a-x.md is row 5a's, never row 5's.
+R=f6l; mkdir -p "$(RD $R)"
+LR --run $R --row 26 --role implementation >/dev/null 2>&1; start $R "$R#26.1" tu-f6l SF6L; fstop $R "$R#26.1" k-f6l
+result "$(RD $R)/26b-fix.md" done none "$R#26.1" "fix round, no commit"
+OUT=$(RC --run $R)
+has "item 33 (1): row 26 finds 26b-fix.md when the run has no row 26b" "$(rowline "$OUT" 26)" "result done@$(RD $R)/26b-fix.md"
+lacks "item 33 (1): no result-attempt-mismatch" "$(rowline "$OUT" 26)" "result-attempt-mismatch"
+result "$(RD $R)/26-x.md" done none "$R#26.1" "exact file"
+OUT=$(RC --run $R)
+has "item 33 (4): an exact 26-x.md still wins over 26b-fix.md" "$(rowline "$OUT" 26)" "result done@$(RD $R)/26-x.md"
+R=f6m; mkdir -p "$(RD $R)"
+LR --run $R --row 5 --role implementation >/dev/null 2>&1; start $R "$R#5.1" tu-f6m SF6M; fstop $R "$R#5.1" k-f6m
+LR --run $R --row 5a --role implementation >/dev/null 2>&1; start $R "$R#5a.1" tu-f6n SF6M; fstop $R "$R#5a.1" k-f6n
+result "$(RD $R)/5a-x.md" done none "$R#5a.1" "row 5a"
+OUT=$(RC --run $R)
+has "item 33 (2): row 5 does not take row 5a's file" "$(rowline "$OUT" 5)" "result none"
+has "item 33 (3): row 5a still finds 5a-x.md" "$(rowline "$OUT" 5a)" "| done done | stop finished · result done@$(RD $R)/5a-x.md"
+printf '%s\n' '---' 'run: f6p' '---' '' '## Status' '' '| # | Status |' '|---|---|' '| 7 | done |' '| 7b | pending |' > "$(RD f6p)-plan.tmp"; mkdir -p "$(RD f6p)"; mv "$(RD f6p)-plan.tmp" "$(RD f6p)/PLAN.md"
+result "$(RD f6p)/7b-x.md" done none
+ok "item 33: a plan row 7b (no launch yet) keeps 7b-x.md away from row 7" "$(RC --run f6p --row 7 | grep -c 'result none')" "1"
+
+# item 33 fix round (#4.2): among the safe candidates a file naming the reconciled attempt wins; none naming it: exact name first, then the lettered fallback
+R=f6q; mkdir -p "$(RD $R)"
+LR --run $R --row 26 --role implementation >/dev/null 2>&1; start $R "$R#26.1" tu-f6q1 SF6Q; fstop $R "$R#26.1" k-f6q1
+result "$(RD $R)/26-x.md" done none "$R#26.1" "round 1"
+result "$(RD $R)/26b-fix.md" done none "$R#26.2" "fix round"
+has "item 33 fix (1): reconciling .1 still finds 26-x.md" "$(rowline "$(RC --run $R)" 26)" "result done@$(RD $R)/26-x.md"
+LR --run $R --row 26 --role implementation --new >/dev/null 2>&1; start $R "$R#26.2" tu-f6q2 SF6Q; fstop $R "$R#26.2" k-f6q2
+OUT=$(RC --run $R)
+has "item 33 fix (1): reconciling .2 finds 26b-fix.md beside a stale 26-x.md" "$(rowline "$OUT" 26)" "26 | $R#26.2 | done done | stop finished · result done@$(RD $R)/26b-fix.md"
+lacks "item 33 fix (1): no result-attempt-mismatch" "$(rowline "$OUT" 26)" "result-attempt-mismatch"
+R=f6r; mkdir -p "$(RD $R)"
+LR --run $R --row 26 --role implementation >/dev/null 2>&1; start $R "$R#26.1" tu-f6r1 SF6R; fstop $R "$R#26.1" k-f6r1
+result "$(RD $R)/26-a.md" done none "$R#26.1" "a"; result "$(RD $R)/26-b.md" done none "$R#26.2" "b"
+has "item 33 fix (2): two exact files, attempt .1 finds 26-a.md" "$(rowline "$(RC --run $R)" 26)" "result done@$(RD $R)/26-a.md"
+LR --run $R --row 26 --role implementation --new >/dev/null 2>&1; start $R "$R#26.2" tu-f6r2 SF6R; fstop $R "$R#26.2" k-f6r2
+has "item 33 fix (2): two exact files, attempt .2 finds 26-b.md" "$(rowline "$(RC --run $R)" 26)" "result done@$(RD $R)/26-b.md"
+R=f6s; mkdir -p "$(RD $R)"
+LR --run $R --row 26 --role implementation >/dev/null 2>&1; start $R "$R#26.1" tu-f6s1 SF6S; fstop $R "$R#26.1" k-f6s1
+result "$(RD $R)/26-x.md" done none "$R#26.1" "round 1"; printf '%s\n' '---' 'status: done' 'sha: none' 'sha_reason: fix round' '---' > "$(RD $R)/26b-fix.md"
+LR --run $R --row 26 --role implementation --new >/dev/null 2>&1; start $R "$R#26.2" tu-f6s2 SF6S; fstop $R "$R#26.2" k-f6s2
+has "item 33 fix (3): none names .2: the exact 26-x.md is used, as in round 1 (other attempt)" "$(rowline "$(RC --run $R)" 26)" "result done@$(RD $R)/26-x.md (other attempt)"
+rm "$(RD $R)/26-x.md"
+has "item 33 fix (3): no exact file, an attempt-less lettered one: lettered fallback as in round 1" "$(rowline "$(RC --run $R)" 26)" "result done@$(RD $R)/26b-fix.md (other attempt)"
+R=f6t; mkdir -p "$(RD $R)"
+LR --run $R --row 5 --role implementation >/dev/null 2>&1; start $R "$R#5.1" tu-f6t1 SF6T; fstop $R "$R#5.1" k-f6t1
+LR --run $R --row 5a --role implementation >/dev/null 2>&1; start $R "$R#5a.1" tu-f6t2 SF6T; fstop $R "$R#5a.1" k-f6t2
+result "$(RD $R)/5a-x.md" done none "$R#5.1" "names a row-5 attempt by mistake"
+OUT=$(RC --run $R)
+has "item 33 fix (4): row 5 still does not take 5a-x.md, whatever its attempt says" "$(rowline "$OUT" 5)" "result none"
+has "item 33 fix (4): row 5a still finds it" "$(rowline "$OUT" 5a)" "result done@$(RD $R)/5a-x.md"
 
 # fixture 7: sha mismatch
 R=f7; RP="$T/repo7"; mkdir -p "$(RD $R)"; mkrepo "$RP"
@@ -878,7 +996,7 @@ ok "reconcile of a missing run folder: exit 2" "$(rc RC --run nope-run)" "2"
 
 echo "== reconcile step 0: G1 pinned copy (row 4 ledger.js, no ingest), fixture 9 (G6 start rebuild)"
 ok "manifest.js never requires ledger.js" "$(grep -cE "require\([^)]*ledger" "$M")" "0"
-PIN="$T/pin/lib"; mkdir -p "$PIN"; cp "$M" "$CL/lib/lease-store.js" "$CL/lib/paths.js" "$CL/lib/defaults.json" "$PIN/";   # a plugin-shaped copy: paths.js finds lib/defaults.json next to it
+PIN="$T/pin/lib"; mkdir -p "$PIN"; cp "$M" "$CL/lib/lease-store.js" "$CL/lib/paths.js" "$CL/lib/plan-status.js" "$CL/lib/defaults.json" "$PIN/";   # a plugin-shaped copy: paths.js finds lib/defaults.json next to it
  printf '%s\n' "console.error('unknown command: ' + process.argv[2]); process.exit(2);" > "$PIN/ledger.js"   # a ledger.js without ingest (exit 2, unknown command)
 R=f9; RP="$T/repo9"; mkdir -p "$(RD $R)"; mkrepo "$RP"; P9="$ORCH_PROJECTS_DIR/p9"; mkdir -p "$P9/SF9/subagents"
 LR --run $R --row 1 --role implementation --git "$RP" --sid SF9 >/dev/null 2>&1
@@ -899,7 +1017,7 @@ has "a launch with no session: not rebuildable" "$OUT" "$R#2.1: no session on la
 node "$PIN/manifest.js" reconcile --run $R --sid SF9 >/dev/null
 ok "a second reconcile rebuilds nothing new" "$(jq -c 'select(.type=="start")' "$(MF $R)" | wc -l | tr -d ' ')" "1"
 ok "a continuation is never rebuilt" "$(fstop $R "$R#1.1" k9; LR --run $R --row 1 --role implementation --sid SF9 --continue "$R#1.1" >/dev/null 2>&1; node "$PIN/manifest.js" reconcile --run $R --sid SF9 | grep -c "$R#1.2: ")" "0"
-STUB="$T/stub/lib"; mkdir -p "$STUB"; cp "$M" "$CL/lib/lease-store.js" "$CL/lib/paths.js" "$CL/lib/defaults.json" "$STUB/"; printf '%s\n' "process.stderr.write('boom from stub\\n'); process.exit(1);" > "$STUB/ledger.js"
+STUB="$T/stub/lib"; mkdir -p "$STUB"; cp "$M" "$CL/lib/lease-store.js" "$CL/lib/paths.js" "$CL/lib/plan-status.js" "$CL/lib/defaults.json" "$STUB/"; printf '%s\n' "process.stderr.write('boom from stub\\n'); process.exit(1);" > "$STUB/ledger.js"
 OUT=$(node "$STUB/manifest.js" reconcile --run $R --sid SF9); st=$?
 ok "a failing ingest: exit 0" "$st" "0"
 has "a failing ingest: ingest failed: <first stderr line>" "$OUT" "ingest failed: boom from stub"

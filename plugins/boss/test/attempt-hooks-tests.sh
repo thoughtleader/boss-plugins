@@ -192,7 +192,7 @@ ok "prompt: two final stops via prompt" "$(evn '.type=="stop" and .via=="prompt"
 ok "prompt: golden ledger line (tokens 43418, tools 7, ms 21708, haiku/low, orch-scout, retries 0)" "$(jq -c --arg id "$ID6" 'select(.id==$id) | [.tokens, .tools, .ms, .model, .effort, .agent, .retries] | map(tostring) | join(" ")' -r "$LFILE")" "43418 7 21708 haiku low orch-scout 0"
 ok "prompt: second ledger line (sonnet/medium)" "$(jq -r --arg id "$ID7" 'select(.id==$id) | "\(.tokens) \(.model)/\(.effort)"' "$LFILE")" "50000 sonnet/medium"
 ok "prompt: one context line per new ledger line" "$(outctx | grep -c '^\[orch\] ledger: .* tokens .*, tools .*, ms .*\. Close: ledger\.js close --attempt ')|$(outctx | grep -cF "[orch] ledger: $ID6 tokens 43418, tools 7, ms 21708. Close: ledger.js close --attempt $ID6 (+ --first-pass --outcome)")" "2|1"
-ok "prompt (holder): ledger and manifest loaded, sqlite never" "$(jq -r '"\(.sqlite) \(.mods | join(","))"' "$PROBE_OUT")" "false lease-store.js,ledger.js,manifest.js"
+ok "prompt (holder): ledger and manifest loaded (manifest brings the plan-status parser), sqlite never" "$(jq -r '"\(.sqlite) \(.mods | join(","))"' "$PROBE_OUT")" "false lease-store.js,ledger.js,manifest.js,plan-status.js"
 l0=$(wc -l < "$LFILE"); m0=$(wc -l < "$MFILE"); hook prompt "$PJ"
 ok "same prompt again: no new stop, no new ledger line, silent" "$(wc -l < "$MFILE" | tr -d ' ')|$(wc -l < "$LFILE" | tr -d ' ')|$(wc -c < "$T/out" | tr -d ' ')" "$m0|$l0|0"
 hook prompt "$(jq -cn --arg s $S1 --arg p "$(notice anoid1 toolu_noid "[haiku/low] Smoke test orch-scout" 43418 7 21708)" --arg tp "$TR" '{session_id:$s, transcript_path:$tp, prompt:$p}')"
@@ -259,6 +259,15 @@ jq -c '.held = "some-other-run"' "$SSF" > "$T/ss.x" && mv "$T/ss.x" "$SSF"
 ok "state kept for a different held-run set: full sweep again" "$(stopread | fullread)" "full"
 printf 'not json' > "$SSF"; ok "a junk state file: full sweep, exit 0" "$(stopread | fullread)|$(cat "$T/rc")" "full|0"
 ok "the full re-sweeps added no events (dedupe): one sweep stop each for $ID8 $ID9 $ID10 $ID11" "$(evn '.type=="stop" and .via=="sweep"')" "4"
+echo "-- an interim 'waiting on its own background work' notice (sweep): recorded provisional, no ledger line; the finished notice then writes the line once"
+TUW=toolu_7171; IDW=$(launch 71 haiku low); meta a7171 "[haiku/low] $IDW interim" $TUW haiku low
+jq -cn --arg c "$(notice a7171 $TUW "[haiku/low] $IDW interim" 7000 2 3000 | sed 's#finished</summary>#is waiting on its own background work</summary>#')" --arg ts "$(date -u -d '+3 min' +%Y-%m-%dT%H:%M:%S.000Z)" '{type:"queue-operation",operation:"enqueue",timestamp:$ts,content:$c}' >> "$TR"
+stopread >/dev/null
+ok "interim notice: one provisional stop (final false, figures kept), no ledger line" "$(ev ".type==\"stop\" and .attempt==\"$IDW\"" | jq -r '"\(.phase) \(.final) \(.provisional) \(.tokens)"')|$(jq -c --arg id "$IDW" 'select(.id==$id)' "$LFILE" | wc -l | tr -d ' ')" "waiting false true 7000|0"
+ok "interim notice: the attempt reads waiting (open) in show, not finished" "$(node "$MAN" show --run $R --row 71 --json | jq -r '.attempts[0].state')" "waiting"
+jq -cn --arg c "$(notice a7171 $TUW "[haiku/low] $IDW interim" 9000 4 5000)" --arg ts "$(date -u -d '+4 min' +%Y-%m-%dT%H:%M:%S.000Z)" '{type:"queue-operation",operation:"enqueue",timestamp:$ts,content:$c}' >> "$TR"
+stopread >/dev/null
+ok "then the finished notice: one ledger line with the final figures, the attempt is finished" "$(jq -r --arg id "$IDW" 'select(.id==$id) | "\(.tokens) \(.tools) \(.ms)"' "$LFILE")|$(jq -c --arg id "$IDW" 'select(.id==$id)' "$LFILE" | wc -l | tr -d ' ')|$(node "$MAN" show --run $R --row 71 --json | jq -r '.attempts[0].state')" "9000 4 5000|1|finished"
 unset SWEEP_TR SWEEP_OUT
 
 echo "== substop (holder)"
